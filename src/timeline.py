@@ -31,6 +31,8 @@ class ClickAction:
     screenshot_path: str = ""  # Path to per-click reference screenshot
     threshold: float = 0.85   # Per-action similarity threshold (0.0–1.0)
     match_texts: str = ""     # Comma-separated text patterns for OCR matching (OR logic)
+    enabled: bool = True      # Whether this action is active
+    repeat_count: int = 1     # Number of clicks to fire (spaced within 1s window)
 
     def to_dict(self) -> dict:
         d = {
@@ -41,6 +43,8 @@ class ClickAction:
             "duration_ms": self.duration_ms,
             "label": self.label,
             "threshold": self.threshold,
+            "enabled": self.enabled,
+            "repeat_count": self.repeat_count,
         }
         if self.screenshot_path:
             d["screenshot_path"] = self.screenshot_path
@@ -62,6 +66,8 @@ class ClickAction:
             screenshot_path=data.get("screenshot_path", ""),
             threshold=data.get("threshold", 0.85),
             match_texts=data.get("match_texts", ""),
+            enabled=data.get("enabled", True),
+            repeat_count=data.get("repeat_count", 1),
         )
 
 

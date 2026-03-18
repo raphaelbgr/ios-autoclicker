@@ -314,9 +314,9 @@ class MainWindow(QMainWindow):
 
         # ── Click actions table (takes most space) ──
         self._table = QTableWidget()
-        self._table.setColumnCount(7)
+        self._table.setColumnCount(8)
         self._table.setHorizontalHeaderLabels(
-            ["#", "Match%", "Delay", "X", "Y", "Type", "Label"]
+            ["On", "#", "Match%", "Delay", "X", "Y", "Type", "Label"]
         )
 
         header = self._table.horizontalHeader()
@@ -326,19 +326,22 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
-        self._table.setColumnWidth(0, 30)
-        self._table.setColumnWidth(1, 55)
-        self._table.setColumnWidth(2, 65)
-        self._table.setColumnWidth(3, 45)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        self._table.setColumnWidth(0, 32)
+        self._table.setColumnWidth(1, 30)
+        self._table.setColumnWidth(2, 55)
+        self._table.setColumnWidth(3, 65)
         self._table.setColumnWidth(4, 45)
-        self._table.setColumnWidth(5, 70)
+        self._table.setColumnWidth(5, 45)
+        self._table.setColumnWidth(6, 70)
 
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._table.doubleClicked.connect(self._edit_action)
         self._table.itemSelectionChanged.connect(self._on_row_selected)
+        self._table.itemChanged.connect(self._on_table_item_changed)
         right_layout.addWidget(self._table, 1)  # stretch factor = 1
 
         # Loop settings
@@ -563,6 +566,7 @@ class MainWindow(QMainWindow):
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _refresh_table(self):
+        self._table.blockSignals(True)  # Prevent itemChanged during rebuild
         actions = self._timeline.actions
         self._table.setRowCount(len(actions))
 
@@ -573,6 +577,16 @@ class MainWindow(QMainWindow):
         }
 
         for i, action in enumerate(actions):
+            # Checkbox column ("On")
+            chk_item = QTableWidgetItem()
+            chk_item.setFlags(
+                Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            )
+            chk_item.setCheckState(
+                Qt.CheckState.Checked if action.enabled else Qt.CheckState.Unchecked
+            )
+            self._table.setItem(i, 0, chk_item)
+
             has_screenshot = "📸" if action.screenshot_path else "—"
             items = [
                 QTableWidgetItem(str(i + 1)),
@@ -585,14 +599,47 @@ class MainWindow(QMainWindow):
             ]
             for j, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self._table.setItem(i, j, item)
+                self._table.setItem(i, j + 1, item)  # offset by 1 for checkbox col
+
+            # Dim disabled rows
+            if not action.enabled:
+                dim_color = QColor(COLORS["text_muted"])
+                for col in range(self._table.columnCount()):
+                    it = self._table.item(i, col)
+                    if it:
+                        it.setForeground(dim_color)
+
+        self._table.blockSignals(False)
 
         self._duration_label.setText(f"Duration: {self._timeline.total_duration_ms} ms")
 
         # Update markers on preview
         self._preview.clear_markers()
         for i, action in enumerate(actions):
-            self._preview.add_marker(action.x, action.y, f"#{i+1}")
+            if action.enabled:
+                self._preview.add_marker(action.x, action.y, f"#{i+1}")
+
+    def _on_table_item_changed(self, item):
+        """Handle checkbox toggle in the 'On' column."""
+        if item.column() != 0:
+            return
+        row = item.row()
+        actions = self._timeline.actions
+        if row >= len(actions):
+            return
+        is_checked = item.checkState() == Qt.CheckState.Checked
+        if actions[row].enabled != is_checked:
+            actions[row].enabled = is_checked
+            self._timeline.update_action(row, actions[row])
+            # Update row dimming
+            for col in range(self._table.columnCount()):
+                it = self._table.item(row, col)
+                if it and col > 0:  # Skip checkbox itself
+                    if is_checked:
+                        it.setForeground(QColor(COLORS["text_primary"]))
+                    else:
+                        it.setForeground(QColor(COLORS["text_muted"]))
+            self._auto_save()
 
     def _on_row_selected(self):
         """When a table row is clicked, show that action's screenshot on the left."""
@@ -814,6 +861,7 @@ class MainWindow(QMainWindow):
     def _on_highlight_action(self, index: int):
         """Highlight the currently watching action row (amber).
         Also keeps the last-triggered row highlighted (green)."""
+        actions = self._timeline.actions
         for row in range(self._table.rowCount()):
             for col in range(self._table.columnCount()):
                 item = self._table.item(row, col)
@@ -828,7 +876,11 @@ class MainWindow(QMainWindow):
                         item.setForeground(QColor("#4ade80"))
                     else:
                         item.setBackground(QColor("transparent"))
-                        item.setForeground(QColor(COLORS["text_primary"]))
+                        # Respect enabled/disabled dim
+                        if row < len(actions) and not actions[row].enabled:
+                            item.setForeground(QColor(COLORS["text_muted"]))
+                        else:
+                            item.setForeground(QColor(COLORS["text_primary"]))
 
         # Scroll to watching row
         if 0 <= index < self._table.rowCount():
@@ -891,12 +943,16 @@ class MainWindow(QMainWindow):
 
     def _clear_row_highlights(self):
         """Remove all row highlights."""
+        actions = self._timeline.actions
         for row in range(self._table.rowCount()):
             for col in range(self._table.columnCount()):
                 item = self._table.item(row, col)
                 if item:
                     item.setBackground(QColor("transparent"))
-                    item.setForeground(QColor(COLORS["text_primary"]))
+                    if row < len(actions) and not actions[row].enabled:
+                        item.setForeground(QColor(COLORS["text_muted"]))
+                    else:
+                        item.setForeground(QColor(COLORS["text_primary"]))
 
     def _start_automation(self):
         if self._is_running:
@@ -992,6 +1048,9 @@ class MainWindow(QMainWindow):
         # Preload all action reference images
         action_refs = {}  # index -> numpy image
         for i, action in enumerate(actions):
+            if not action.enabled:
+                self._logger.info(f"#{i+1} ({action.label}) is DISABLED, skipping")
+                continue
             ref_img = None
             if action.screenshot_path:
                 ref_img = self._project.load_action_screenshot(action.screenshot_path)
@@ -1012,6 +1071,8 @@ class MainWindow(QMainWindow):
         # Parse text patterns once
         action_text_patterns = {}
         for i, action in enumerate(actions):
+            if not action.enabled:
+                continue
             if action.match_texts and action.match_texts.strip():
                 patterns = [t.strip() for t in action.match_texts.split(",") if t.strip()]
                 action_text_patterns[i] = patterns
@@ -1114,18 +1175,28 @@ class MainWindow(QMainWindow):
                     self._signal_bridge.bring_to_front.emit()
                     self._bring_to_front_done.wait(timeout=2.0)
                     time.sleep(0.05)
+
+                    # Execute clicks (repeat_count times within 1s window)
+                    clicks = max(1, action.repeat_count)
+                    click_interval = 1.0 / clicks if clicks > 1 else 0
                     self._logger.click(
-                        f"Click #{i+1}: ({action.x}, {action.y})",
+                        f"Click #{i+1}: ({action.x}, {action.y}) x{clicks}",
                         f"type={action.click_type}, delay={action.delay_ms}ms"
                     )
-                    self._click_engine.click_at(
-                        action.x, action.y,
-                        click_type=action.click_type,
-                        duration_ms=action.duration_ms,
-                    )
+                    for click_n in range(clicks):
+                        if self._stop_event.is_set():
+                            return
+                        self._click_engine.click_at(
+                            action.x, action.y,
+                            click_type=action.click_type,
+                            duration_ms=action.duration_ms,
+                        )
+                        if click_n < clicks - 1 and click_interval > 0:
+                            self._stop_event.wait(click_interval)
+
                     self._signal_bridge.action_triggered.emit(i, best_reason)
                     self._signal_bridge.status_update.emit(
-                        f"✅ #{i+1} '{action.label}' clicked"
+                        f"✅ #{i+1} '{action.label}' clicked x{clicks}"
                     )
 
                     # Cooldown — screen will change after click

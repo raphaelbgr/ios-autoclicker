@@ -153,6 +153,13 @@ class AddClickDialog(QDialog):
         self._match_texts_edit.setPlaceholderText("e.g., game over, victory, score  (comma-separated, OR logic)")
         form.addRow("Also matches text:", self._match_texts_edit)
 
+        # Repeat count (clicks per trigger)
+        self._repeat_spin = QSpinBox()
+        self._repeat_spin.setRange(1, 50)
+        self._repeat_spin.setValue(action.repeat_count if action else 1)
+        self._repeat_spin.setToolTip("Number of clicks to fire when this action triggers (spaced within 1s)")
+        form.addRow("Repeat clicks:", self._repeat_spin)
+
         layout.addLayout(form)
 
         # Buttons
@@ -207,6 +214,7 @@ class AddClickDialog(QDialog):
             screenshot_path=self._existing_screenshot_path,
             threshold=self._threshold_slider.value() / 100.0,
             match_texts=self._match_texts_edit.text().strip(),
+            repeat_count=self._repeat_spin.value(),
         )
 
     def get_screenshot(self):
