@@ -22,11 +22,13 @@ DEFAULT_PROJECT = "default"
 class ProjectSettings:
     threshold: float = 0.85
     monitor_interval_ms: int = 500
+    background_click: bool = False
 
     def to_dict(self) -> dict:
         return {
             "threshold": self.threshold,
             "monitor_interval_ms": self.monitor_interval_ms,
+            "background_click": self.background_click,
         }
 
     @classmethod
@@ -34,6 +36,7 @@ class ProjectSettings:
         return cls(
             threshold=data.get("threshold", 0.85),
             monitor_interval_ms=data.get("monitor_interval_ms", 500),
+            background_click=data.get("background_click", False),
         )
 
 

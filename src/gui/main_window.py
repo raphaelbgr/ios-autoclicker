@@ -423,6 +423,12 @@ class MainWindow(QMainWindow):
         self._interval_spin.valueChanged.connect(self._on_interval_changed)
         control_layout.addWidget(self._interval_spin)
 
+        self._bg_click_check = QCheckBox("Background Click")
+        self._bg_click_check.setToolTip("Click without moving the mouse or focusing window")
+        self._bg_click_check.setChecked(self._settings.background_click)
+        self._bg_click_check.toggled.connect(self._on_bg_click_changed)
+        control_layout.addWidget(self._bg_click_check)
+
         control_layout.addStretch()
 
         self._start_btn = QPushButton("▶  Start Automation")
@@ -478,6 +484,7 @@ class MainWindow(QMainWindow):
         # Save settings
         self._settings.threshold = self._recognizer.threshold
         self._settings.monitor_interval_ms = self._monitor_interval_ms
+        self._settings.background_click = self._bg_click_check.isChecked()
         self._project.save_settings(self._settings)
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -766,6 +773,10 @@ class MainWindow(QMainWindow):
 
     def _on_interval_changed(self, value: int):
         self._monitor_interval_ms = value
+        self._auto_save()
+
+    def _on_bg_click_changed(self, checked: bool):
+        self._settings.background_click = checked
         self._auto_save()
 
     def _import_timeline(self):
@@ -1171,17 +1182,19 @@ class MainWindow(QMainWindow):
                             return
 
                     # Bring window to front on the main thread (AppKit requirement)
-                    self._bring_to_front_done.clear()
-                    self._signal_bridge.bring_to_front.emit()
-                    self._bring_to_front_done.wait(timeout=2.0)
-                    time.sleep(0.05)
+                    is_bg_click = self._settings.background_click
+                    if not is_bg_click:
+                        self._bring_to_front_done.clear()
+                        self._signal_bridge.bring_to_front.emit()
+                        self._bring_to_front_done.wait(timeout=2.0)
+                        time.sleep(0.05)
 
                     # Execute clicks (repeat_count times within 1s window)
                     clicks = max(1, action.repeat_count)
                     click_interval = 1.0 / clicks if clicks > 1 else 0
                     self._logger.click(
                         f"Click #{i+1}: ({action.x}, {action.y}) x{clicks}",
-                        f"type={action.click_type}, delay={action.delay_ms}ms"
+                        f"type={action.click_type}, delay={action.delay_ms}ms, bg={is_bg_click}"
                     )
                     for click_n in range(clicks):
                         if self._stop_event.is_set():
@@ -1190,6 +1203,7 @@ class MainWindow(QMainWindow):
                             action.x, action.y,
                             click_type=action.click_type,
                             duration_ms=action.duration_ms,
+                            background=is_bg_click,
                         )
                         if click_n < clicks - 1 and click_interval > 0:
                             self._stop_event.wait(click_interval)
