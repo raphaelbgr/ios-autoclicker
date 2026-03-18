@@ -16,7 +16,9 @@ from Quartz import (
     kCGEventLeftMouseUp,
     CGEventSetIntegerValueField,
     kCGMouseEventClickState,
-    CGEventPostToPid,
+    CGEventCreate,
+    CGEventGetLocation,
+    kCGEventMouseMoved,
 )
 from Quartz.CoreGraphics import CGPointMake
 
@@ -78,33 +80,32 @@ class ClickEngine:
         abs_x = window.x + x
         abs_y = window.y + y
 
-        pid = window.owner_pid if background else None
-
         try:
             if click_type == ClickType.SINGLE:
-                self._single_click(abs_x, abs_y, pid)
+                self._execute_with_cursor_restore(background, self._single_click, abs_x, abs_y)
             elif click_type == ClickType.DOUBLE:
-                self._double_click(abs_x, abs_y, pid)
+                self._execute_with_cursor_restore(background, self._double_click, abs_x, abs_y)
             elif click_type == ClickType.LONG_PRESS:
-                self._long_press(abs_x, abs_y, duration_ms, pid)
+                self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms)
             return True
         except Exception:
             return False
 
     def execute_at_absolute(self, abs_x: int, abs_y: int,
                             click_type: str = ClickType.SINGLE,
-                            duration_ms: int = 100) -> bool:
+                            duration_ms: int = 100,
+                            background: bool = False) -> bool:
         """Execute a click at absolute screen coordinates."""
         if not self._is_active:
             return False
 
         try:
             if click_type == ClickType.SINGLE:
-                self._single_click(abs_x, abs_y)
+                self._execute_with_cursor_restore(background, self._single_click, abs_x, abs_y)
             elif click_type == ClickType.DOUBLE:
-                self._double_click(abs_x, abs_y)
+                self._execute_with_cursor_restore(background, self._double_click, abs_x, abs_y)
             elif click_type == ClickType.LONG_PRESS:
-                self._long_press(abs_x, abs_y, duration_ms)
+                self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms)
             return True
         except Exception:
             return False
@@ -121,15 +122,26 @@ class ClickEngine:
         return self._screen_capture.bring_window_to_front(window)
 
     @staticmethod
-    def _post_event(event, pid: Optional[int] = None):
-        """Post the CGEvent either globally or directly to a PID (background)."""
-        if pid is not None:
-            CGEventPostToPid(pid, event)
-        else:
-            CGEventPost(kCGHIDEventTap, event)
+    def _execute_with_cursor_restore(is_background: bool, click_func, *args, **kwargs):
+        """Execute a click function. If is_background is True, it restores cursor position."""
+        original_loc = None
+        if is_background:
+            # Capture the current global mouse location
+            evt = CGEventCreate(None)
+            original_loc = CGEventGetLocation(evt)
+
+        # Perform the actual click
+        click_func(*args, **kwargs)
+
+        if is_background and original_loc is not None:
+            # Revert cursor back to original location instantly
+            move_event = CGEventCreateMouseEvent(
+                None, kCGEventMouseMoved, original_loc, 0
+            )
+            CGEventPost(kCGHIDEventTap, move_event)
 
     @staticmethod
-    def _single_click(x: int, y: int, pid: Optional[int] = None):
+    def _single_click(x: int, y: int):
         """Perform a single left click at absolute coordinates."""
         point = CGPointMake(float(x), float(y))
 
@@ -137,7 +149,7 @@ class ClickEngine:
         event_down = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseDown, point, 0
         )
-        ClickEngine._post_event(event_down, pid)
+        CGEventPost(kCGHIDEventTap, event_down)
 
         time.sleep(0.05)  # Small delay between down/up
 
@@ -145,10 +157,10 @@ class ClickEngine:
         event_up = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseUp, point, 0
         )
-        ClickEngine._post_event(event_up, pid)
+        CGEventPost(kCGHIDEventTap, event_up)
 
     @staticmethod
-    def _double_click(x: int, y: int, pid: Optional[int] = None):
+    def _double_click(x: int, y: int):
         """Perform a double click at absolute coordinates."""
         point = CGPointMake(float(x), float(y))
 
@@ -157,13 +169,13 @@ class ClickEngine:
             None, kCGEventLeftMouseDown, point, 0
         )
         CGEventSetIntegerValueField(event_down1, kCGMouseEventClickState, 1)
-        ClickEngine._post_event(event_down1, pid)
+        CGEventPost(kCGHIDEventTap, event_down1)
 
         event_up1 = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseUp, point, 0
         )
         CGEventSetIntegerValueField(event_up1, kCGMouseEventClickState, 1)
-        ClickEngine._post_event(event_up1, pid)
+        CGEventPost(kCGHIDEventTap, event_up1)
 
         time.sleep(0.05)
 
@@ -172,23 +184,23 @@ class ClickEngine:
             None, kCGEventLeftMouseDown, point, 0
         )
         CGEventSetIntegerValueField(event_down2, kCGMouseEventClickState, 2)
-        ClickEngine._post_event(event_down2, pid)
+        CGEventPost(kCGHIDEventTap, event_down2)
 
         event_up2 = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseUp, point, 0
         )
         CGEventSetIntegerValueField(event_up2, kCGMouseEventClickState, 2)
-        ClickEngine._post_event(event_up2, pid)
+        CGEventPost(kCGHIDEventTap, event_up2)
 
     @staticmethod
-    def _long_press(x: int, y: int, duration_ms: int = 500, pid: Optional[int] = None):
+    def _long_press(x: int, y: int, duration_ms: int = 500):
         """Perform a long press at absolute coordinates."""
         point = CGPointMake(float(x), float(y))
 
         event_down = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseDown, point, 0
         )
-        ClickEngine._post_event(event_down, pid)
+        CGEventPost(kCGHIDEventTap, event_down)
 
         # Hold for the specified duration
         time.sleep(duration_ms / 1000.0)
@@ -196,4 +208,4 @@ class ClickEngine:
         event_up = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseUp, point, 0
         )
-        ClickEngine._post_event(event_up, pid)
+        CGEventPost(kCGHIDEventTap, event_up)
