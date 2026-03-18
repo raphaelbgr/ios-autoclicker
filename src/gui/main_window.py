@@ -1229,18 +1229,41 @@ class MainWindow(QMainWindow):
             self._bring_to_front_done.set()
 
     def closeEvent(self, event):
+        # Block table signals FIRST to prevent itemChanged firing during destruction
+        self._table.blockSignals(True)
+
+        # Stop timers immediately
+        self._live_timer.stop()
+        self._elapsed_timer.stop()
+
         try:
             self._auto_save()
         except Exception:
             pass
+
+        # Signal automation thread to stop
         self._stop_event.set()
-        self._bring_to_front_done.set()  # Unblock automation thread if waiting
+        self._bring_to_front_done.set()  # Unblock if waiting
+
         try:
             self._timeline_executor.stop()
         except Exception:
             pass
-        self._live_timer.stop()
-        self._elapsed_timer.stop()
+
+        # Wait for automation thread to finish
         if self._automation_thread and self._automation_thread.is_alive():
             self._automation_thread.join(timeout=2.0)
+
+        # Disconnect all signal bridge connections to prevent signals during destruction
+        try:
+            self._signal_bridge.match_update.disconnect()
+            self._signal_bridge.status_update.disconnect()
+            self._signal_bridge.automation_stopped.disconnect()
+            self._signal_bridge.new_log.disconnect()
+            self._signal_bridge.highlight_action.disconnect()
+            self._signal_bridge.action_triggered.disconnect()
+            self._signal_bridge.bring_to_front.disconnect()
+        except Exception:
+            pass
+
         event.accept()
