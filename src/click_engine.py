@@ -50,7 +50,7 @@ class ClickEngine:
 
     def click_at(self, x: int, y: int, click_type: str = ClickType.SINGLE,
                  duration_ms: int = 100, window: Optional[WindowInfo] = None,
-                 background: bool = False) -> bool:
+                 background: bool = False, stop_event=None) -> bool:
         """
         Execute a click at the given coordinates.
 
@@ -86,7 +86,7 @@ class ClickEngine:
             elif click_type == ClickType.DOUBLE:
                 self._execute_with_cursor_restore(background, self._double_click, abs_x, abs_y)
             elif click_type == ClickType.LONG_PRESS:
-                self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms)
+                self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms, stop_event)
             return True
         except Exception:
             return False
@@ -94,7 +94,8 @@ class ClickEngine:
     def execute_at_absolute(self, abs_x: int, abs_y: int,
                             click_type: str = ClickType.SINGLE,
                             duration_ms: int = 100,
-                            background: bool = False) -> bool:
+                            background: bool = False,
+                            stop_event=None) -> bool:
         """Execute a click at absolute screen coordinates."""
         if not self._is_active:
             return False
@@ -105,7 +106,7 @@ class ClickEngine:
             elif click_type == ClickType.DOUBLE:
                 self._execute_with_cursor_restore(background, self._double_click, abs_x, abs_y)
             elif click_type == ClickType.LONG_PRESS:
-                self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms)
+                self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms, stop_event)
             return True
         except Exception:
             return False
@@ -193,7 +194,7 @@ class ClickEngine:
         CGEventPost(kCGHIDEventTap, event_up2)
 
     @staticmethod
-    def _long_press(x: int, y: int, duration_ms: int = 500):
+    def _long_press(x: int, y: int, duration_ms: int = 500, stop_event=None):
         """Perform a long press at absolute coordinates."""
         point = CGPointMake(float(x), float(y))
 
@@ -202,8 +203,11 @@ class ClickEngine:
         )
         CGEventPost(kCGHIDEventTap, event_down)
 
-        # Hold for the specified duration
-        time.sleep(duration_ms / 1000.0)
+        # Hold for the specified duration (interruptible if stop_event is provided)
+        if stop_event is not None:
+            stop_event.wait(duration_ms / 1000.0)
+        else:
+            time.sleep(duration_ms / 1000.0)
 
         event_up = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseUp, point, 0

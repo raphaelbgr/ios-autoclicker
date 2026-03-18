@@ -1221,6 +1221,7 @@ class MainWindow(QMainWindow):
                             click_type=action.click_type,
                             duration_ms=action.duration_ms,
                             background=is_bg_click,
+                            stop_event=self._stop_event,
                         )
                         if click_n < clicks - 1 and click_interval > 0:
                             self._stop_event.wait(click_interval)
