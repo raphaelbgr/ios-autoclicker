@@ -1,0 +1,13 @@
+#!/bin/bash
+# Get the absolute path to the project root
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../../.." >/dev/null 2>&1 && pwd )"
+cd "$DIR"
+
+# Ensure venv exists and is activated
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+source .venv/bin/activate
+
+# Execute the main python module silently
+exec python -m src.main

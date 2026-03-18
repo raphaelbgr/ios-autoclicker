@@ -95,6 +95,9 @@ That's it. The `run.sh` script automatically:
 2. Installs all dependencies
 3. Launches the app
 
+### macOS Desktop App Shortcut
+A native `.app` bundle named **`iOS AutoClicker.app`** with a custom icon is included in the project folder. You can double-click this app or use the provided alias on your Desktop to launch the Auto-Clicker without opening the terminal. Note: Be sure to grant this app Accessibility permissions on its first run if prompted.
+
 ### Manual Installation
 
 ```bash
