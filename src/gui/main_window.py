@@ -1145,10 +1145,7 @@ class MainWindow(QMainWindow):
                                 text_match, matched_text, all_texts = text_matches_any(
                                     image, action_text_patterns[i]
                                 )
-                                if all_texts:
-                                    self._logger.info(
-                                        f"OCR #{i+1}: {all_texts}"
-                                    )
+                                # (Raw OCR texts are intentionally not logged here to prevent UI spam)
                                 if text_match:
                                     best_match_idx = i
                                     best_reason = f'text: "{matched_text}"'
