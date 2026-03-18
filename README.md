@@ -53,8 +53,12 @@ Supported click types: **Single Click**, **Double Click**, **Long Press** (confi
 
 - 📸 **Per-action screenshots** — each click action has its own trigger screenshot
 - 🎯 **Visual click position picker** — click on the screenshot to set coordinates
-- 🔍 **Live match preview** — see real-time similarity percentage
+- 📊 **Real-time Match Progress** — Every action displays a live, animated progress bar showing its similarity to the current screen
+- 👻 **Ghost Click (Background mode)** — Execute clicks instantly without visibly moving your mouse or stealing focus
 - 📝 **OCR text matching** — fallback detection using on-screen text
+- ⏯️ **Action Toggles** — Easily disable/enable specific actions in your timeline without deleting them
+- 🔁 **Repeat Clicks** — Issue rapid-fire multi-clicks per single trigger match (great for games)
+- ⏱️ **Infinite Long Presses** — Hold specific clicks for milliseconds to hours, safely interruptible
 - 🔄 **Loop support** — repeat the sequence N times or infinitely
 - 💾 **Auto-save** — all project data persists automatically between sessions
 - 📤 **Import/Export** — save and share timelines as JSON files
@@ -187,8 +191,10 @@ Timelines are saved as JSON and can be shared:
       "y": 696,
       "click_type": "single",
       "duration_ms": 500,
+      "repeat_count": 1,
       "label": "Tap Play Button",
       "threshold": 0.85,
+      "enabled": true,
       "screenshot_path": "projects/default/screenshots/action_0_123456.png",
       "match_texts": "PLAY, START"
     }
