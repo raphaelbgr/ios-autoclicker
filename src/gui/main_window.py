@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QCheckBox, QLineEdit, QTextEdit,
     QSizePolicy, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QTextCharFormat, QColor
 
 from src.screen_capture import ScreenCapture
@@ -44,7 +44,7 @@ CATEGORY_COLORS = {
 
 class SignalBridge(QObject):
     """Thread-safe signal bridge for updating GUI from automation thread."""
-    match_update = pyqtSignal(float, bool)
+    match_update = pyqtSignal(list, int)
     status_update = pyqtSignal(str)
     automation_stopped = pyqtSignal()
     new_log = pyqtSignal(object)
@@ -314,9 +314,9 @@ class MainWindow(QMainWindow):
 
         # ── Click actions table (takes most space) ──
         self._table = QTableWidget()
-        self._table.setColumnCount(8)
+        self._table.setColumnCount(9)
         self._table.setHorizontalHeaderLabels(
-            ["On", "#", "Match%", "Delay", "X", "Y", "Type", "Label"]
+            ["On", "#", "Match%", "Current", "Delay", "X", "Y", "Type", "Label"]
         )
 
         header = self._table.horizontalHeader()
@@ -327,14 +327,16 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
         self._table.setColumnWidth(0, 32)
         self._table.setColumnWidth(1, 30)
         self._table.setColumnWidth(2, 55)
-        self._table.setColumnWidth(3, 65)
-        self._table.setColumnWidth(4, 45)
+        self._table.setColumnWidth(3, 70)
+        self._table.setColumnWidth(4, 65)
         self._table.setColumnWidth(5, 45)
-        self._table.setColumnWidth(6, 70)
+        self._table.setColumnWidth(6, 45)
+        self._table.setColumnWidth(7, 70)
 
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -598,6 +600,7 @@ class MainWindow(QMainWindow):
             items = [
                 QTableWidgetItem(str(i + 1)),
                 QTableWidgetItem(f"{int(action.threshold * 100)}%{has_screenshot}"),
+                None,  # Placeholder for the Current% Progress Bar
                 QTableWidgetItem(f"{action.delay_ms}"),
                 QTableWidgetItem(str(action.x)),
                 QTableWidgetItem(str(action.y)),
@@ -605,8 +608,17 @@ class MainWindow(QMainWindow):
                 QTableWidgetItem(action.label),
             ]
             for j, item in enumerate(items):
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self._table.setItem(i, j + 1, item)  # offset by 1 for checkbox col
+                if item is None:
+                    # Create the Progress Bar for the "Current" column
+                    bar = QProgressBar()
+                    bar.setRange(0, 100)
+                    bar.setValue(0)
+                    bar.setFormat("%v%")
+                    bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {COLORS['accent']}; border-radius: 2px; }}")
+                    self._table.setCellWidget(i, j + 1, bar)
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self._table.setItem(i, j + 1, item)
 
             # Dim disabled rows
             if not action.enabled:
@@ -1108,10 +1120,14 @@ class MainWindow(QMainWindow):
                 best_match_idx = -1
                 best_similarity = 0.0
                 best_reason = ""
+                sim_scores = [0.0] * len(actions)
 
                 for i, action in enumerate(actions):
                     if self._stop_event.is_set():
                         return
+
+                    if not action.enabled:
+                        continue
 
                     # Screenshot comparison
                     if i in action_refs:
@@ -1129,6 +1145,7 @@ class MainWindow(QMainWindow):
                             self._logger.warning(f"SSIM error for #{i+1}: {e}")
                             sim = 0.0
 
+                        sim_scores[i] = sim
                         if sim >= action.threshold and sim > best_similarity:
                             best_similarity = sim
                             best_match_idx = i
@@ -1139,6 +1156,8 @@ class MainWindow(QMainWindow):
                     for i, action in enumerate(actions):
                         if self._stop_event.is_set():
                             return
+                        if not action.enabled:
+                            continue
                         if i in action_text_patterns:
                             try:
                                 from src.ocr import text_matches_any
@@ -1147,6 +1166,7 @@ class MainWindow(QMainWindow):
                                 )
                                 # (Raw OCR texts are intentionally not logged here to prevent UI spam)
                                 if text_match:
+                                    sim_scores[i] = 1.0  # Force text match to show as 100% locally
                                     best_match_idx = i
                                     best_reason = f'text: "{matched_text}"'
                                     break  # First text match wins
@@ -1155,7 +1175,7 @@ class MainWindow(QMainWindow):
 
                 # 3. Update display
                 self._signal_bridge.match_update.emit(
-                    float(best_similarity), best_match_idx >= 0
+                    sim_scores, best_match_idx
                 )
 
                 # 4. If we found a match → click it
@@ -1224,8 +1244,31 @@ class MainWindow(QMainWindow):
         finally:
             self._signal_bridge.automation_stopped.emit()
 
-    def _on_match_update(self, similarity: float, is_match: bool):
-        self._update_match_display(similarity, is_match)
+    def _on_match_update(self, sim_scores: list, best_match_idx: int):
+        best_sim = max(sim_scores) if sim_scores else 0.0
+        self._update_match_display(float(best_sim), best_match_idx >= 0)
+
+        # Update per-row progress bars with smooth animation
+        for i, sim in enumerate(sim_scores):
+            bar = self._table.cellWidget(i, 3)  # current % progress bar is col 3
+            if isinstance(bar, QProgressBar):
+                target_val = int(sim * 100)
+                
+                if i == best_match_idx:
+                    bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {COLORS['success']}; border-radius: 2px; }}")
+                else:
+                    bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {COLORS['accent']}; border-radius: 2px; }}")
+                
+                # Assign / Start animation safely
+                if not hasattr(bar, '_anim'):
+                    bar._anim = QPropertyAnimation(bar, b"value", parent=bar)
+                    bar._anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+                
+                bar._anim.stop()
+                bar._anim.setDuration(max(100, min(self._monitor_interval_ms, 500)))
+                bar._anim.setStartValue(bar.value())
+                bar._anim.setEndValue(target_val)
+                bar._anim.start()
 
     def _on_status_update(self, status: str):
         self._status_label.setText(status)
