@@ -143,7 +143,7 @@ class AddClickDialog(QDialog):
 
         # Duration (for long press)
         self._duration_spin = QSpinBox()
-        self._duration_spin.setRange(50, 10000)
+        self._duration_spin.setRange(50, 9999999)
         self._duration_spin.setSuffix(" ms")
         self._duration_spin.setValue(action.duration_ms if action else 500)
         form.addRow("Hold duration:", self._duration_spin)
