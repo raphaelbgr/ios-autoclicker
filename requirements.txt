@@ -1,0 +1,8 @@
+PyQt6>=6.6.0
+opencv-python>=4.9.0
+scikit-image>=0.22.0
+pyobjc-framework-Quartz>=10.0
+pyobjc-framework-Cocoa>=10.0
+pyobjc-framework-Vision>=10.0
+Pillow>=10.0.0
+numpy>=1.26.0

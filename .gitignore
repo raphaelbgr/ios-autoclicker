@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# macOS
+.DS_Store
+._*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project data (user-specific)
+projects/
+logs/
+
+# Agent/AI config
+.agents/
+.agent/
+
+# Exported timelines (user data)
+*.json
+!package.json
+
+# Keep requirements.txt tracked
+!requirements.txt
