@@ -6,6 +6,8 @@ A macOS desktop application that automates taps on your iPhone through the **iPh
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+![iOS Auto-Clicker Screenshot](docs/screenshot.png)
+
 ## How It Works
 
 The app watches the iPhone Mirroring window on your Mac and compares it against reference screenshots you provide. When the screen matches a known state, it automatically clicks at the position you defined.
