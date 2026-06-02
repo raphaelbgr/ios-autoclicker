@@ -14,6 +14,7 @@ from Quartz import (
     kCGHIDEventTap,
     kCGEventLeftMouseDown,
     kCGEventLeftMouseUp,
+    kCGEventLeftMouseDragged,
     CGEventSetIntegerValueField,
     kCGMouseEventClickState,
     CGEventCreate,
@@ -33,6 +34,25 @@ class ClickType:
 
 class ClickEngine:
     """Sends mouse clicks to specific screen coordinates."""
+
+    @staticmethod
+    def has_post_event_permission() -> bool:
+        """True if this process may post synthetic input events (macOS Accessibility).
+        Without it, CGEvent clicks are silently dropped by the OS."""
+        try:
+            from Quartz import CGPreflightPostEventAccess
+            return bool(CGPreflightPostEventAccess())
+        except Exception:
+            return True  # API unavailable → don't block the user
+
+    @staticmethod
+    def request_post_event_permission() -> bool:
+        """Trigger the macOS prompt to grant event-posting (Accessibility) permission."""
+        try:
+            from Quartz import CGRequestPostEventAccess
+            return bool(CGRequestPostEventAccess())
+        except Exception:
+            return False
 
     def __init__(self, screen_capture: Optional[ScreenCapture] = None):
         self._screen_capture = screen_capture or ScreenCapture()
@@ -71,8 +91,6 @@ class ClickEngine:
         # Get window info for coordinate conversion
         if window is None:
             window = self._screen_capture.get_cached_window()
-            if window is None:
-                window = self._screen_capture.find_iphone_mirroring_window()
         if window is None:
             return False
 
@@ -121,6 +139,55 @@ class ClickEngine:
             return False
 
         return self._screen_capture.bring_window_to_front(window)
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int,
+              duration_ms: int = 300, window: Optional[WindowInfo] = None,
+              steps: int = 24, stop_event=None) -> bool:
+        """
+        Perform a click-drag (swipe) gesture from one window-relative point to another.
+
+        Used for iOS gestures through iPhone Mirroring — e.g. swiping an app card
+        up in the App Switcher to force-quit it. Coordinates are window-relative,
+        matching click_at().
+        """
+        if not self._is_active:
+            return False
+
+        if window is None:
+            window = self._screen_capture.get_cached_window()
+        if window is None:
+            return False
+
+        ax1, ay1 = window.x + x1, window.y + y1
+        ax2, ay2 = window.x + x2, window.y + y2
+        steps = max(2, steps)
+        interval = (duration_ms / 1000.0) / steps
+
+        try:
+            down = CGEventCreateMouseEvent(
+                None, kCGEventLeftMouseDown, CGPointMake(float(ax1), float(ay1)), 0
+            )
+            CGEventPost(kCGHIDEventTap, down)
+
+            for s in range(1, steps + 1):
+                if stop_event is not None and stop_event.is_set():
+                    break
+                t = s / steps
+                cx = ax1 + (ax2 - ax1) * t
+                cy = ay1 + (ay2 - ay1) * t
+                drag = CGEventCreateMouseEvent(
+                    None, kCGEventLeftMouseDragged, CGPointMake(float(cx), float(cy)), 0
+                )
+                CGEventPost(kCGHIDEventTap, drag)
+                time.sleep(interval)
+
+            up = CGEventCreateMouseEvent(
+                None, kCGEventLeftMouseUp, CGPointMake(float(ax2), float(ay2)), 0
+            )
+            CGEventPost(kCGHIDEventTap, up)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _execute_with_cursor_restore(is_background: bool, click_func, *args, **kwargs):

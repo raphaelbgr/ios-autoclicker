@@ -33,6 +33,12 @@ class ClickAction:
     match_texts: str = ""     # Comma-separated text patterns for OCR matching (OR logic)
     enabled: bool = True      # Whether this action is active
     repeat_count: int = 1     # Number of clicks to fire (spaced within 1s window)
+    # ── App lifecycle actions (drive the mirrored iPhone) ──
+    action_type: str = "click"      # "click" | "close_app" | "open_app"
+    close_method: str = "force_quit"  # "force_quit" (App Switcher swipe) | "home"
+    open_method: str = "spotlight"    # "spotlight" (type name) | "tap_icon" (click x,y)
+    app_name: str = ""                # App name to type in Spotlight (open_app)
+    post_delay_ms: int = 0            # Wait after the app action completes
 
     def to_dict(self) -> dict:
         d = {
@@ -50,6 +56,13 @@ class ClickAction:
             d["screenshot_path"] = self.screenshot_path
         if self.match_texts:
             d["match_texts"] = self.match_texts
+        # Only persist app-action fields for non-click actions (keeps click entries clean)
+        if self.action_type != "click":
+            d["action_type"] = self.action_type
+            d["close_method"] = self.close_method
+            d["open_method"] = self.open_method
+            d["app_name"] = self.app_name
+            d["post_delay_ms"] = self.post_delay_ms
         return d
 
     @classmethod
@@ -68,6 +81,11 @@ class ClickAction:
             match_texts=data.get("match_texts", ""),
             enabled=data.get("enabled", True),
             repeat_count=data.get("repeat_count", 1),
+            action_type=data.get("action_type", "click"),
+            close_method=data.get("close_method", "force_quit"),
+            open_method=data.get("open_method", "spotlight"),
+            app_name=data.get("app_name", ""),
+            post_delay_ms=data.get("post_delay_ms", 0),
         )
 
 

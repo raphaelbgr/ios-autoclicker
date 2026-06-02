@@ -23,12 +23,14 @@ class ProjectSettings:
     threshold: float = 0.85
     monitor_interval_ms: int = 500
     background_click: bool = False
+    target_app: str = "iPhone Mirroring"
 
     def to_dict(self) -> dict:
         return {
             "threshold": self.threshold,
             "monitor_interval_ms": self.monitor_interval_ms,
             "background_click": self.background_click,
+            "target_app": self.target_app,
         }
 
     @classmethod
@@ -37,6 +39,7 @@ class ProjectSettings:
             threshold=data.get("threshold", 0.85),
             monitor_interval_ms=data.get("monitor_interval_ms", 500),
             background_click=data.get("background_click", False),
+            target_app=data.get("target_app", "iPhone Mirroring"),
         )
 
 

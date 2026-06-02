@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QSplitter, QFrame,
     QMessageBox, QSpinBox, QSlider, QFileDialog,
     QGroupBox, QProgressBar, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox, QLineEdit, QTextEdit,
+    QHeaderView, QCheckBox, QLineEdit, QTextEdit, QComboBox,
     QSizePolicy, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve
@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         self._is_running = False
         self._automation_thread = None
         self._stop_event = threading.Event()
+        self._window_lock = threading.Lock()   # guards _cached_window hot-swap
         self._signal_bridge = SignalBridge()
         self._signal_bridge.match_update.connect(self._on_match_update)
         self._signal_bridge.status_update.connect(self._on_status_update)
@@ -91,6 +92,12 @@ class MainWindow(QMainWindow):
 
         # ── Buttons to lock/unlock during automation ──
         self._edit_buttons = []
+
+        # ── Button pulse animation state ──
+        self._btn_pulse_timer = QTimer(self)
+        self._btn_pulse_timer.setInterval(600)
+        self._btn_pulse_timer.timeout.connect(self._pulse_buttons)
+        self._btn_pulse_state = False
 
         # ── Last-triggered tracking ──
         self._last_triggered_index = -1
@@ -111,11 +118,14 @@ class MainWindow(QMainWindow):
 
         self._setup_window()
         self._setup_ui()
+        self._refresh_project_combo()
         self._load_saved_data()
         self._check_permissions()
 
-        self._logger.add_listener(self._on_log_entry_from_thread)
         self._logger.info("Application started", "iOS Auto-Clicker ready")
+        
+        # Populate window picker after data is loaded
+        self._detect_window()
 
     def _setup_window(self):
         self.setWindowTitle("iOS Auto-Clicker")
@@ -158,17 +168,18 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(8)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Window detection
+        # Window detection wrapper
         detect_layout = QHBoxLayout()
-        self._window_status = QLabel("No window detected")
-        self._window_status.setObjectName("statusLabel")
-        self._window_status.setStyleSheet("font-size: 11px; padding: 4px 8px;")
-        detect_layout.addWidget(self._window_status, 1)
+        self._window_picker = QComboBox()
+        self._window_picker.setObjectName("windowPicker")
+        self._window_picker.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._window_picker.currentIndexChanged.connect(self._on_window_selected)
+        detect_layout.addWidget(self._window_picker, 1)
 
-        detect_btn = QPushButton("🔍 Detect")
-        detect_btn.setFixedWidth(80)
-        detect_btn.clicked.connect(self._detect_window)
-        detect_layout.addWidget(detect_btn)
+        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn.setFixedWidth(80)
+        refresh_btn.clicked.connect(self._detect_window)
+        detect_layout.addWidget(refresh_btn)
         left_layout.addLayout(detect_layout)
 
         # Screenshot buttons
@@ -201,6 +212,7 @@ class MainWindow(QMainWindow):
         self._preview = ClickPositionPicker()
         self._preview.setMinimumHeight(300)
         self._preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._preview.position_selected.connect(self._on_preview_position_picked)
         left_layout.addWidget(self._preview, 1)
 
         # Threshold controls
@@ -256,6 +268,20 @@ class MainWindow(QMainWindow):
         tl_title.setObjectName("header")
         tl_header.addWidget(tl_title)
         tl_header.addStretch()
+
+        # Project selector + New (each project is its own clicks/triggers config)
+        tl_header.addWidget(QLabel("Project:"))
+        self._project_combo = QComboBox()
+        self._project_combo.setFixedWidth(130)
+        self._project_combo.currentTextChanged.connect(self._on_project_selected)
+        tl_header.addWidget(self._project_combo)
+
+        new_proj_btn = QPushButton("➕ New")
+        new_proj_btn.setMinimumWidth(90)
+        new_proj_btn.setToolTip("Create a new project (its own clicks, triggers, screenshots and settings)")
+        new_proj_btn.clicked.connect(self._new_project)
+        tl_header.addWidget(new_proj_btn)
+        self._edit_buttons.append(new_proj_btn)
 
         tl_header.addWidget(QLabel("Name:"))
         self._name_edit = QLineEdit(self._timeline.name)
@@ -334,9 +360,9 @@ class MainWindow(QMainWindow):
         self._table.setColumnWidth(2, 55)
         self._table.setColumnWidth(3, 70)
         self._table.setColumnWidth(4, 65)
-        self._table.setColumnWidth(5, 45)
-        self._table.setColumnWidth(6, 45)
-        self._table.setColumnWidth(7, 70)
+        self._table.setColumnWidth(5, 55)
+        self._table.setColumnWidth(6, 55)
+        self._table.setColumnWidth(7, 90)
 
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -494,22 +520,93 @@ class MainWindow(QMainWindow):
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _detect_window(self):
-        window = self._screen_capture.find_iphone_mirroring_window()
+        """Populates the combo box with available windows + Entire Screen."""
+        import os
+        own_pid = os.getpid()
+        self._window_picker.blockSignals(True)
+        self._window_picker.clear()
+        self._window_picker.addItem("[Entire Screen]", "[Entire Screen]")
+
+        windows = self._screen_capture.list_windows()
+        windows.sort(key=lambda w: w.owner_name.lower())
+
+        iphone_idx = -1
+        for w in windows:
+            if not w.owner_name:
+                continue
+            # Never offer the auto-clicker's own window as a target (avoids self-targeting)
+            if w.owner_pid == own_pid:
+                continue
+            display_name = f"{w.owner_name} - {w.window_name}" if w.window_name else w.owner_name
+            composite_key = f"{w.window_id}::{w.owner_name}::{w.window_name}"
+            self._window_picker.addItem(display_name, composite_key)
+            if iphone_idx < 0 and "iphone mirroring" in w.owner_name.lower():
+                iphone_idx = self._window_picker.count() - 1
+
+        # Restore previous selection — match by owner name part (IDs change across reboots)
+        target = self._settings.target_app
+        target_owner = target.split("::")[1] if "::" in target else target
+        # Treat stale self-targets / no-target as invalid so we can auto-prefer iPhone Mirroring
+        bogus = target_owner in ("Python", "iOS Auto-Clicker", "[Entire Screen]", "")
+        selected_idx = 0  # default to Entire Screen
+
+        if not bogus:
+            for i in range(self._window_picker.count()):
+                userData = self._window_picker.itemData(i)
+                userOwner = userData.split("::")[1] if "::" in userData else userData
+                if userOwner == target_owner:
+                    selected_idx = i
+                    break
+
+        # Nothing valid restored → auto-select iPhone Mirroring if present, and persist it
+        if selected_idx == 0 and iphone_idx >= 0:
+            selected_idx = iphone_idx
+            self._settings.target_app = self._window_picker.itemData(iphone_idx)
+            self._project.save_settings(self._settings)
+
+        self._window_picker.setCurrentIndex(selected_idx)
+        self._window_picker.blockSignals(False)
+        self._refresh_cached_window(selected_idx)
+
+    def _refresh_cached_window(self, index):
+        """Update the internal cached window from picker index WITHOUT saving settings."""
+        if index < 0:
+            return
+        target = self._window_picker.itemData(index)
+        if target:
+            window = self._screen_capture.find_target_window(target)
+            # Thread-safe update
+            with self._window_lock:
+                self._screen_capture._cached_window = window
+
+    def _on_window_selected(self, index):
+        if index < 0:
+            return
+        target = self._window_picker.itemData(index)
+        if not target:
+            return
+
+        friendly_name = target.split("::")[1] if "::" in target else target
+
+        # Immediately resolve + cache the window (thread-safe for hot-swap during automation)
+        window = self._screen_capture.find_target_window(target)
+        with self._window_lock:
+            self._screen_capture._cached_window = window
+
+        # Save selection to settings
+        self._settings.target_app = target
+        self._project.save_settings(self._settings)
+
         if window:
-            self._window_status.setText(
-                f"✅ {window.owner_name} ({window.width}×{window.height})"
-            )
-            self._window_status.setStyleSheet(
-                f"font-size: 11px; padding: 4px 8px; color: {COLORS['success']};"
-            )
+            width = window.width if not window.is_entire_screen else "[Full]"
+            height = window.height if not window.is_entire_screen else "[Full]"
+            self._logger.log(LogCategory.INFO, f"🎯 Target locked: {friendly_name} ({width}×{height})")
         else:
-            self._window_status.setText("❌ Not found — open iPhone Mirroring")
-            self._window_status.setStyleSheet(
-                f"font-size: 11px; padding: 4px 8px; color: {COLORS['error']};"
-            )
+            self._logger.log(LogCategory.WARNING, f"⚠️ Target not visible: {friendly_name} (will retry on capture)")
 
     def _capture_screen(self):
-        image = self._screen_capture.capture_iphone_mirroring()
+        self._logger.log(LogCategory.STATE_CHANGE, f"Capturing {self._settings.target_app} screen...")
+        image = self._screen_capture.capture_target(self._settings.target_app)
         if image is not None:
             self._recognizer.set_reference(image)
             self._preview.set_image(image)
@@ -541,7 +638,7 @@ class MainWindow(QMainWindow):
         if not self._recognizer.has_reference:
             self._match_status.setText("No ref")
             return
-        image = self._screen_capture.capture_iphone_mirroring()
+        image = self._screen_capture.capture_target(self._settings.target_app)
         if image is None:
             self._match_status.setText("No window")
             return
@@ -597,6 +694,12 @@ class MainWindow(QMainWindow):
             self._table.setItem(i, 0, chk_item)
 
             has_screenshot = "📸" if action.screenshot_path else "—"
+            if action.action_type == "close_app":
+                type_label = "Close App" + (" (home)" if action.close_method == "home" else " (quit)")
+            elif action.action_type == "open_app":
+                type_label = "Open App" + (" (tap)" if action.open_method == "tap_icon" else " (spotlight)")
+            else:
+                type_label = type_names.get(action.click_type, action.click_type)
             items = [
                 QTableWidgetItem(str(i + 1)),
                 QTableWidgetItem(f"{int(action.threshold * 100)}%{has_screenshot}"),
@@ -604,7 +707,7 @@ class MainWindow(QMainWindow):
                 QTableWidgetItem(f"{action.delay_ms}"),
                 QTableWidgetItem(str(action.x)),
                 QTableWidgetItem(str(action.y)),
-                QTableWidgetItem(type_names.get(action.click_type, action.click_type)),
+                QTableWidgetItem(type_label),
                 QTableWidgetItem(action.label),
             ]
             for j, item in enumerate(items):
@@ -689,6 +792,30 @@ class MainWindow(QMainWindow):
             self._preview.set_image(self._recognizer.reference_image)
             self._preview.clear_markers()
             self._preview.add_marker(action.x, action.y, f"#{row + 1}")
+
+    def _on_preview_position_picked(self, x: int, y: int):
+        """Click on the left preview to set the selected action's X/Y coordinate."""
+        if self._is_running:
+            return
+        row = self._table.currentRow()
+        actions = self._timeline.actions
+        if row < 0 or row >= len(actions):
+            self._status_label.setText("👆 Select an action row first, then click to set its X/Y")
+            self._logger.info("Position pick ignored — select an action row first")
+            return
+        action = actions[row]
+        action.x = x
+        action.y = y
+        self._timeline.update_action(row, action)
+        self._refresh_table()
+        self._table.selectRow(row)
+        self._preview.clear_markers()
+        self._preview.add_marker(x, y, f"#{row + 1}")
+        self._auto_save()
+        self._logger.info(
+            f"Set #{row + 1} '{action.label}' position",
+            f"({x}, {y})"
+        )
 
     def _add_action(self):
         from src.gui.timeline_editor import AddClickDialog
@@ -867,9 +994,50 @@ class MainWindow(QMainWindow):
                 "Screen Recording permission may not be granted",
                 "System Settings → Privacy & Security → Screen Recording"
             )
-        self._logger.info(
-            "Make sure Accessibility permission is enabled",
-            "System Settings → Privacy & Security → Accessibility"
+        if not ClickEngine.has_post_event_permission():
+            self._logger.warning(
+                "⚠️ Accessibility NOT granted — clicks will be silently ignored by macOS",
+                "System Settings → Privacy & Security → Accessibility → enable Python / this app"
+            )
+        else:
+            self._logger.info("Accessibility permission OK — clicks enabled")
+
+    ACCESSIBILITY_HELP = (
+        "macOS is silently ignoring the clicks: the app matches the screen but "
+        "the taps never reach the iPhone.\n\n"
+        "To fix:\n"
+        "1.  Open  System Settings → Privacy & Security → Accessibility\n"
+        "2.  Enable the entry for this app. Because it runs via Python, it is usually "
+        "listed as “Python” — enable EVERY Python entry shown (e.g. python3.11, python3.14).\n"
+        "      • If nothing relevant is listed, click ➕ and add the app / Python.\n"
+        "3.  If an entry is already ON, toggle it OFF then ON to refresh it.\n"
+        "4.  Quit and relaunch this app, then press Start again.\n\n"
+        "(A system permission prompt may have just appeared — its “Open System Settings” "
+        "button takes you straight there.)"
+    )
+
+    def _warn_accessibility(self):
+        """Show clear instructions for granting Accessibility (event-posting) permission."""
+        # Also fire the native prompt — this adds Python/the app to the Accessibility list
+        ClickEngine.request_post_event_permission()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Accessibility permission required")
+        box.setText("This app can't send clicks until you grant Accessibility permission.")
+        box.setInformativeText(self.ACCESSIBILITY_HELP)
+        open_btn = box.addButton("Open Accessibility Settings", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            import subprocess
+            subprocess.run(
+                ["open", "x-apple.systempreferences:com.apple.preference.security"
+                 "?Privacy_Accessibility"],
+                capture_output=True,
+            )
+        self._logger.warning(
+            "Accessibility permission missing — clicks are being dropped by macOS",
+            "System Settings → Privacy & Security → Accessibility → enable Python / this app"
         )
 
     def _set_editing_locked(self, locked: bool):
@@ -981,6 +1149,11 @@ class MainWindow(QMainWindow):
         if self._is_running:
             return
 
+        # Accessibility / event-posting permission — without it clicks silently no-op
+        if not ClickEngine.has_post_event_permission():
+            self._warn_accessibility()
+            return
+
         # Check that actions have screenshots or text patterns
         has_any_ref = self._recognizer.has_reference
         actions = self._timeline.actions
@@ -1004,11 +1177,12 @@ class MainWindow(QMainWindow):
             )
             return
 
-        window = self._screen_capture.find_iphone_mirroring_window()
+        window = self._screen_capture.find_target_window(self._settings.target_app)
+        friendly_name = self._settings.target_app.split("::")[1] if "::" in self._settings.target_app else self._settings.target_app
         if window is None:
             QMessageBox.warning(
                 self, "Window Not Found",
-                "Could not find the iPhone Mirroring window.\n"
+                f"Could not find window matching '{friendly_name}'.\n"
                 "Make sure it's open and visible."
             )
             return
@@ -1017,7 +1191,7 @@ class MainWindow(QMainWindow):
         self._stop_event.clear()
         self._start_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
-        self._set_editing_locked(True)  # Lock editing
+        self._set_editing_locked(True)
         self._status_label.setText("🟢 Running")
         self._status_label.setStyleSheet(
             f"color: {COLORS['success']}; "
@@ -1036,20 +1210,42 @@ class MainWindow(QMainWindow):
         )
         self._automation_thread.start()
         self._elapsed_timer.start()
+        self._btn_pulse_state = False
+        self._btn_pulse_timer.start()
 
     def _stop_automation(self):
         self._stop_event.set()
         self._timeline_executor.stop()
+        # Animate stop button as "stopping..."
+        self._stop_btn.setText("⏳  Stopping...")
         self._logger.log(LogCategory.STATE_CHANGE, "Automation stop requested")
+
+    def _pulse_buttons(self):
+        """Toggle a pulsing glow on the Stop button while automation is running."""
+        self._btn_pulse_state = not self._btn_pulse_state
+        if self._btn_pulse_state:
+            self._stop_btn.setStyleSheet(
+                f"background-color: #ff4757; color: white; font-weight: 700; font-size: 14px;"
+                f"padding: 12px 32px; border: none; border-radius: 8px;"
+                f"box-shadow: 0 0 12px #ff4757;"
+            )
+        else:
+            self._stop_btn.setStyleSheet(
+                f"background-color: {COLORS['accent']}; color: white; font-weight: 700; font-size: 14px;"
+                f"padding: 12px 32px; border: 2px solid #ff8a95; border-radius: 8px;"
+            )
 
     def _on_automation_stopped(self):
         self._is_running = False
+        self._btn_pulse_timer.stop()
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
-        self._set_editing_locked(False)  # Unlock editing
+        self._stop_btn.setText("⏹  Stop")
+        self._stop_btn.setStyleSheet("")  # reset to stylesheet default
+        self._start_btn.setStyleSheet("")  # reset
+        self._set_editing_locked(False)
         self._elapsed_timer.stop()
         self._clear_row_highlights()
-        # Keep the last-triggered label visible so user sees final state
         self._status_label.setText("⏸ Idle")
         self._status_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; "
@@ -1057,6 +1253,166 @@ class MainWindow(QMainWindow):
             f"border: 1px solid {COLORS['border']};"
         )
         self._logger.log(LogCategory.STATE_CHANGE, "Automation stopped")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  Projects (multiple clicks/triggers configurations)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _refresh_project_combo(self):
+        """Populate the project selector and select the current project."""
+        self._project_combo.blockSignals(True)
+        self._project_combo.clear()
+        names = set(Project.list_projects())
+        names.add("default")
+        names.add(self._project.name)
+        for n in sorted(names):
+            self._project_combo.addItem(n)
+        idx = self._project_combo.findText(self._project.name)
+        if idx >= 0:
+            self._project_combo.setCurrentIndex(idx)
+        self._project_combo.blockSignals(False)
+
+    def _new_project(self):
+        if self._is_running:
+            QMessageBox.information(self, "Busy", "Stop automation before creating a project.")
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "New Project", "Project name:")
+        name = (name or "").strip().replace("/", "_").replace("\\", "_")
+        if not ok or not name:
+            return
+        if name in Project.list_projects():
+            QMessageBox.information(self, "Project Exists",
+                                    f"'{name}' already exists — switching to it.")
+            self._auto_save()
+            self._load_project(name)
+            return
+        self._auto_save()  # persist current project before switching
+        self._load_project(name, fresh=True)
+        self._logger.info(f"Created project: {name}")
+
+    def _on_project_selected(self, name: str):
+        name = (name or "").strip()
+        if not name or name == self._project.name:
+            return
+        if self._is_running:
+            QMessageBox.information(self, "Busy", "Stop automation before switching projects.")
+            self._refresh_project_combo()  # revert selection
+            return
+        self._auto_save()
+        self._load_project(name)
+
+    def _load_project(self, name: str, fresh: bool = False):
+        """Switch to a different project and reload all project-bound state."""
+        self._project = Project(name)
+        self._settings = self._project.load_settings()
+
+        if fresh:
+            self._timeline = Timeline(name)
+        else:
+            loaded = self._project.load_timeline()
+            self._timeline = loaded if loaded else Timeline(name)
+
+        # Recognizer + reference screenshot
+        self._recognizer = ScreenRecognizer(threshold=self._settings.threshold)
+        ref = self._project.load_reference()
+        if ref is not None:
+            self._recognizer.set_reference(ref)
+            self._preview.set_image(ref)
+        self._monitor_interval_ms = self._settings.monitor_interval_ms
+
+        # Sync UI controls (block signals to avoid re-saving during refresh)
+        for widget, setter in (
+            (self._name_edit, lambda: self._name_edit.setText(self._timeline.name)),
+            (self._threshold_slider, lambda: self._threshold_slider.setValue(int(self._settings.threshold * 100))),
+            (self._interval_spin, lambda: self._interval_spin.setValue(self._monitor_interval_ms)),
+            (self._bg_click_check, lambda: self._bg_click_check.setChecked(self._settings.background_click)),
+            (self._loop_check, lambda: self._loop_check.setChecked(self._timeline.loop)),
+            (self._loop_count_spin, lambda: self._loop_count_spin.setValue(self._timeline.loop_count)),
+        ):
+            widget.blockSignals(True)
+            setter()
+            widget.blockSignals(False)
+        self._threshold_label.setText(f"{int(self._settings.threshold * 100)}%")
+
+        self._refresh_table()
+        self._refresh_project_combo()
+        self._detect_window()  # re-resolve target window for this project's target_app
+        self._project.save_settings(self._settings)
+        self._project.save_timeline(self._timeline)
+        self._logger.info(f"Switched to project: {name}",
+                          f"{len(self._timeline.actions)} actions")
+
+    def _scale_to_window(self, action, window):
+        """Convert an action's stored coords (capture-pixel space) to window logical points.
+
+        Reference screenshots may be captured at Retina 2x, so the position picker
+        records coordinates in image-pixel space. Clicks (CGEvent) use window points,
+        so scale by window.width / screenshot.width. For 1x captures this is a no-op.
+        """
+        x, y = action.x, action.y
+        if window is None or not window.width or not window.height:
+            return x, y
+        import cv2, os
+        ref = None
+        if action.screenshot_path and os.path.exists(action.screenshot_path):
+            ref = cv2.imread(action.screenshot_path)
+        if ref is None and self._recognizer.reference_image is not None:
+            ref = self._recognizer.reference_image
+        if ref is not None and ref.shape[1] > 0 and ref.shape[0] > 0:
+            return (int(round(x * window.width / ref.shape[1])),
+                    int(round(y * window.height / ref.shape[0])))
+        return x, y
+
+    def _perform_app_action(self, action, window):
+        """Close or open the mirrored iPhone app via iPhone Mirroring controls.
+        Runs on the automation thread (AppleScript + CGEvent only — no AppKit)."""
+        from src import iphone_control
+
+        def wait_ms(ms):
+            if ms > 0:
+                self._stop_event.wait(ms / 1000.0)
+
+        if action.action_type == "close_app":
+            if action.close_method == "home":
+                self._logger.log(LogCategory.STATE_CHANGE, "📱 Close App → Home Screen")
+                iphone_control.send_command("home")
+            else:
+                self._logger.log(LogCategory.STATE_CHANGE,
+                                 "📱 Close App → force-quit (App Switcher → swipe up → Home)")
+                iphone_control.send_command("app_switcher")
+                wait_ms(800)
+                if window is not None and not window.is_entire_screen and window.width and window.height:
+                    w, h = window.width, window.height
+                    self._click_engine.swipe(
+                        int(w * 0.5), int(h * 0.62),
+                        int(w * 0.5), int(h * 0.10),
+                        duration_ms=350, window=window,
+                        stop_event=self._stop_event,
+                    )
+                wait_ms(600)
+                iphone_control.send_command("home")
+
+        elif action.action_type == "open_app":
+            if action.open_method == "tap_icon":
+                self._logger.log(LogCategory.STATE_CHANGE, "📱 Open App → Home → tap icon")
+                iphone_control.send_command("home")
+                wait_ms(800)
+                cx, cy = self._scale_to_window(action, window)
+                self._click_engine.click_at(
+                    cx, cy, window=window,
+                    background=False, stop_event=self._stop_event,
+                )
+            else:
+                name = action.app_name or ""
+                self._logger.log(LogCategory.STATE_CHANGE,
+                                 f"📱 Open App → Spotlight: '{name}'")
+                iphone_control.send_command("spotlight")
+                wait_ms(800)
+                if name:
+                    iphone_control.type_text(name, press_return=True)
+
+        wait_ms(action.post_delay_ms)
 
     def _automation_loop(self):
         """Simple model: capture screen → compare ALL action screenshots → click first match → repeat.
@@ -1107,12 +1463,25 @@ class MainWindow(QMainWindow):
 
         try:
             while not self._stop_event.is_set():
-                # 1. Capture current screen
-                image = self._screen_capture.capture_iphone_mirroring()
+                # 1. Read current target window (hot-swappable: re-read each tick under lock)
+                with self._window_lock:
+                    cached = self._screen_capture.get_cached_window()
+
+                # If cache was cleared (e.g. app quit), try one re-lookup
+                if cached is None:
+                    with self._window_lock:
+                        cached = self._screen_capture.find_target_window(self._settings.target_app)
+
+                image = self._screen_capture.capture_window(cached) if cached else None
+
                 if image is None:
+                    friendly = self._settings.target_app.split("::")[1] if "::" in self._settings.target_app else self._settings.target_app
+                    self._logger.warning(f"Cannot capture '{friendly}' — window not found or inaccessible")
                     self._signal_bridge.status_update.emit("⚠️ No window")
                     self._stop_event.wait(self._monitor_interval_ms / 1000.0)
                     continue
+
+
 
                 cur_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -1198,6 +1567,16 @@ class MainWindow(QMainWindow):
                         if self._stop_event.is_set():
                             return
 
+                    # App-lifecycle actions (close / open the mirrored iPhone app)
+                    if action.action_type in ("close_app", "open_app"):
+                        self._perform_app_action(action, cached)
+                        self._signal_bridge.action_triggered.emit(i, best_reason)
+                        self._signal_bridge.status_update.emit(
+                            f"✅ #{i+1} '{action.label}' — {action.action_type}"
+                        )
+                        self._stop_event.wait(1.0)
+                        continue
+
                     # Bring window to front on the main thread (AppKit requirement)
                     is_bg_click = self._settings.background_click
                     if not is_bg_click:
@@ -1209,15 +1588,16 @@ class MainWindow(QMainWindow):
                     # Execute clicks (repeat_count times within 1s window)
                     clicks = max(1, action.repeat_count)
                     click_interval = 1.0 / clicks if clicks > 1 else 0
+                    cx_pts, cy_pts = self._scale_to_window(action, cached)
                     self._logger.click(
-                        f"Click #{i+1}: ({action.x}, {action.y}) x{clicks}",
+                        f"Click #{i+1}: ({cx_pts}, {cy_pts}) x{clicks}",
                         f"type={action.click_type}, delay={action.delay_ms}ms, bg={is_bg_click}"
                     )
                     for click_n in range(clicks):
                         if self._stop_event.is_set():
                             return
                         self._click_engine.click_at(
-                            action.x, action.y,
+                            cx_pts, cy_pts,
                             click_type=action.click_type,
                             duration_ms=action.duration_ms,
                             background=is_bg_click,

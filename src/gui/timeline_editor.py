@@ -45,7 +45,7 @@ class AddClickDialog(QDialog):
 
         if screen_capture is not None:
             capture_btn = QPushButton("📸 Capture Now")
-            capture_btn.setToolTip("Take a fresh screenshot of the iPhone Mirroring window")
+            capture_btn.setToolTip("Take a fresh screenshot of the target window")
             capture_btn.clicked.connect(self._capture_screen)
             preview_header.addWidget(capture_btn)
 
@@ -85,11 +85,22 @@ class AddClickDialog(QDialog):
         # ── Form fields ──
         form = QFormLayout()
         form.setSpacing(8)
+        self._form = form
 
         # Label
         self._label_edit = QLineEdit(action.label if action else "")
         self._label_edit.setPlaceholderText("e.g., Tap Play Button")
         form.addRow("Label:", self._label_edit)
+
+        # Action type — Click vs app-lifecycle actions on the mirrored iPhone
+        self._action_combo = QComboBox()
+        self._action_combo.addItems(["Click", "Close App", "Open App"])
+        action_type_map = {"click": 0, "close_app": 1, "open_app": 2}
+        self._action_combo.setCurrentIndex(
+            action_type_map.get(action.action_type, 0) if action else 0
+        )
+        self._action_combo.currentIndexChanged.connect(self._update_field_visibility)
+        form.addRow("Action:", self._action_combo)
 
         # Match threshold (per-action)
         thresh_layout = QHBoxLayout()
@@ -128,6 +139,7 @@ class AddClickDialog(QDialog):
         coord_layout.addWidget(self._y_spin)
 
         form.addRow("Position:", coord_layout)
+        self._coord_layout = coord_layout
 
         # Click type
         self._type_combo = QComboBox()
@@ -160,7 +172,40 @@ class AddClickDialog(QDialog):
         self._repeat_spin.setToolTip("Number of clicks to fire when this action triggers (spaced within 1s)")
         form.addRow("Repeat clicks:", self._repeat_spin)
 
+        # ── App-lifecycle fields (shown for Close App / Open App) ──
+        # Close method
+        self._close_method_combo = QComboBox()
+        self._close_method_combo.addItems(["Force-quit (App Switcher)", "Go Home (background)"])
+        if action and action.close_method == "home":
+            self._close_method_combo.setCurrentIndex(1)
+        form.addRow("Close method:", self._close_method_combo)
+
+        # Open method
+        self._open_method_combo = QComboBox()
+        self._open_method_combo.addItems(["Spotlight (type name)", "Tap icon at X,Y"])
+        if action and action.open_method == "tap_icon":
+            self._open_method_combo.setCurrentIndex(1)
+        self._open_method_combo.currentIndexChanged.connect(self._update_field_visibility)
+        form.addRow("Open method:", self._open_method_combo)
+
+        # App name (for Spotlight launch)
+        self._app_name_edit = QLineEdit(action.app_name if action else "")
+        self._app_name_edit.setPlaceholderText("Exact app name as it appears in Spotlight")
+        form.addRow("App name:", self._app_name_edit)
+
+        # Post-action wait
+        self._post_delay_spin = QSpinBox()
+        self._post_delay_spin.setRange(0, 600000)
+        self._post_delay_spin.setSuffix(" ms")
+        self._post_delay_spin.setSingleStep(500)
+        self._post_delay_spin.setValue(action.post_delay_ms if action else 5000)
+        self._post_delay_spin.setToolTip("Wait after the app action completes (e.g. time for the app to relaunch)")
+        form.addRow("Wait after action:", self._post_delay_spin)
+
         layout.addLayout(form)
+
+        # Set initial field visibility based on the selected action type
+        self._update_field_visibility()
 
         # Buttons
         buttons = QDialogButtonBox(
@@ -172,10 +217,15 @@ class AddClickDialog(QDialog):
         layout.addWidget(buttons)
 
     def _capture_screen(self):
-        """Capture a fresh screenshot from iPhone Mirroring."""
+        """Capture a fresh screenshot from the target window."""
         if self._screen_capture is None:
             return
-        image = self._screen_capture.capture_iphone_mirroring()
+            
+        window = self._screen_capture.get_cached_window()
+        if window is None:
+            return
+            
+        image = self._screen_capture.capture_window(window)
         if image is not None:
             self._local_picker.set_image(image)
             self._captured_image = image
@@ -194,6 +244,25 @@ class AddClickDialog(QDialog):
             f"Selected: ({self._selected_x}, {self._selected_y})"
         )
 
+    def _update_field_visibility(self):
+        """Show/hide form rows based on the selected action type."""
+        idx = self._action_combo.currentIndex()  # 0=Click, 1=Close App, 2=Open App
+        is_click = idx == 0
+        is_close = idx == 1
+        is_open = idx == 2
+        open_is_spotlight = self._open_method_combo.currentIndex() == 0
+
+        # Position used by Click and by Open App "tap icon"
+        self._form.setRowVisible(self._coord_layout, is_click or (is_open and not open_is_spotlight))
+        self._form.setRowVisible(self._type_combo, is_click)
+        self._form.setRowVisible(self._duration_spin, is_click)
+        self._form.setRowVisible(self._repeat_spin, is_click)
+
+        self._form.setRowVisible(self._close_method_combo, is_close)
+        self._form.setRowVisible(self._open_method_combo, is_open)
+        self._form.setRowVisible(self._app_name_edit, is_open and open_is_spotlight)
+        self._form.setRowVisible(self._post_delay_spin, is_close or is_open)
+
     def _on_threshold_changed(self, value: int):
         self._threshold_label.setText(f"{value}%")
 
@@ -204,6 +273,9 @@ class AddClickDialog(QDialog):
             1: ClickType.DOUBLE,
             2: ClickType.LONG_PRESS,
         }
+        action_type = {0: "click", 1: "close_app", 2: "open_app"}.get(
+            self._action_combo.currentIndex(), "click"
+        )
         return ClickAction(
             delay_ms=self._delay_spin.value(),
             x=self._x_spin.value(),
@@ -215,6 +287,11 @@ class AddClickDialog(QDialog):
             threshold=self._threshold_slider.value() / 100.0,
             match_texts=self._match_texts_edit.text().strip(),
             repeat_count=self._repeat_spin.value(),
+            action_type=action_type,
+            close_method="home" if self._close_method_combo.currentIndex() == 1 else "force_quit",
+            open_method="tap_icon" if self._open_method_combo.currentIndex() == 1 else "spotlight",
+            app_name=self._app_name_edit.text().strip(),
+            post_delay_ms=self._post_delay_spin.value(),
         )
 
     def get_screenshot(self):

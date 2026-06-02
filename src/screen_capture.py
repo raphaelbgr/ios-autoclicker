@@ -56,6 +56,10 @@ class WindowInfo:
     def y(self) -> int:
         return int(self.bounds.get("Y", 0))
 
+    @property
+    def is_entire_screen(self) -> bool:
+        return self.owner_name == "[Entire Screen]"
+
 
 class ScreenCapture:
     """Captures screenshots of specific macOS windows."""
@@ -101,52 +105,110 @@ class ScreenCapture:
 
         return windows
 
-    def find_iphone_mirroring_window(self) -> Optional[WindowInfo]:
-        """Find the iPhone Mirroring window."""
+    def find_target_window(self, target_name: str) -> Optional[WindowInfo]:
+        """Find the window that matches the target name, or 'Entire Screen'."""
+        if target_name == "[Entire Screen]":
+            # Return a mock WindowInfo for the whole screen
+            import Quartz
+            main_monitor = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+            w = WindowInfo(
+                window_id=0,
+                owner_name="[Entire Screen]",
+                window_name="Entire Screen",
+                bounds={"X": main_monitor.origin.x, "Y": main_monitor.origin.y, "Width": main_monitor.size.width, "Height": main_monitor.size.height},
+                owner_pid=0,
+                is_on_screen=True
+            )
+            self._cached_window = w
+            return w
+
         windows = self.list_windows()
+        
+        # 1. Exact Composite Match (ID::Owner::Name) prioritizing ID for the active session
+        parts = target_name.split("::", 2)
+        if len(parts) == 3:
+            target_id, target_owner, target_wname = parts
+            target_id = int(target_id)
+            for w in windows:
+                if w.window_id == target_id:
+                    self._cached_window = w
+                    return w
+                    
+            # Fallback 1a: Match by exact owner + window name
+            for w in windows:
+                if w.owner_name == target_owner and w.window_name == target_wname:
+                    self._cached_window = w
+                    return w
+                    
+            target_name = target_owner # Downgrade to owner matching if strict composite fails
+
+        # First exact owner match
         for w in windows:
-            if (IPHONE_MIRRORING_APP_NAME.lower() in w.owner_name.lower() or
-                    IPHONE_MIRRORING_BUNDLE_ID.lower() in w.owner_name.lower()):
+            if target_name.lower() == w.owner_name.lower():
                 self._cached_window = w
                 return w
-        # Fallback: search all windows
+        # Second substring owner match
         for w in windows:
-            if "iphone" in w.owner_name.lower() or "mirror" in w.owner_name.lower():
+            if target_name.lower() in w.owner_name.lower():
                 self._cached_window = w
                 return w
+                
+        # If looking for iPhone Mirroring specifically, fallbacks
+        if target_name == IPHONE_MIRRORING_APP_NAME:
+            for w in windows:
+                if (IPHONE_MIRRORING_APP_NAME.lower() in w.owner_name.lower() or
+                        IPHONE_MIRRORING_BUNDLE_ID.lower() in w.owner_name.lower() or
+                        "iphone" in w.owner_name.lower() or "mirror" in w.owner_name.lower()):
+                    self._cached_window = w
+                    return w
+                    
         return None
 
     def capture_window(self, window: WindowInfo) -> Optional[np.ndarray]:
         """Capture a window and return as numpy array (BGR format for OpenCV)."""
         try:
-            cg_image = CGWindowListCreateImage(
-                CGRectNull,
-                kCGWindowListOptionIncludingWindow,
-                window.window_id,
-                kCGWindowImageBoundsIgnoreFraming,
-            )
+            from Quartz import CGRectInfinite
+            if window.is_entire_screen:
+                cg_image = CGWindowListCreateImage(
+                    CGRectInfinite,
+                    kCGWindowListOptionOnScreenOnly,
+                    kCGNullWindowID,
+                    kCGWindowImageBoundsIgnoreFraming,
+                )
+            else:
+                cg_image = CGWindowListCreateImage(
+                    CGRectNull,
+                    kCGWindowListOptionIncludingWindow,
+                    window.window_id,
+                    kCGWindowImageBoundsIgnoreFraming,
+                )
             if cg_image is None:
                 return None
 
             return self._cgimage_to_numpy(cg_image)
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"[capture_window ERROR] id={window.window_id} owner='{window.owner_name}': {e}", flush=True)
+            traceback.print_exc()
             return None
 
-    def capture_iphone_mirroring(self) -> Optional[np.ndarray]:
-        """Convenience: find and capture the iPhone Mirroring window."""
-        window = self.find_iphone_mirroring_window()
+    def capture_target(self, target_name: str) -> Optional[np.ndarray]:
+        """Convenience: find and capture the target window."""
+        window = self.find_target_window(target_name)
         if window is None:
             return None
         return self.capture_window(window)
 
     def get_cached_window(self) -> Optional[WindowInfo]:
-        """Return the last found iPhone Mirroring window info."""
+        """Return the last found target window info."""
         return self._cached_window
 
     @staticmethod
     def bring_window_to_front(window: WindowInfo) -> bool:
         """Bring a window's application to the foreground.
         Must be called from the main thread (AppKit requirement)."""
+        if window.is_entire_screen:
+            return True
         try:
             workspace = NSWorkspace.sharedWorkspace()
             apps = workspace.runningApplications()

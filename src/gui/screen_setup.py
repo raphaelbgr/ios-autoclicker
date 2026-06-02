@@ -158,7 +158,7 @@ class ScreenSetup(QWidget):
         outer_layout.addWidget(scroll)
 
     def _detect_window(self):
-        window = self._capture.find_iphone_mirroring_window()
+        window = self._capture.find_target_window("[Entire Screen]")
         if window:
             self._window_status.setText(
                 f"✅ Found: {window.owner_name} — "
@@ -181,7 +181,7 @@ class ScreenSetup(QWidget):
             )
 
     def _capture_screen(self):
-        image = self._capture.capture_iphone_mirroring()
+        image = self._capture.capture_target("[Entire Screen]")
         if image is not None:
             self._recognizer.set_reference(image)
             self._preview.set_image(image)
@@ -223,7 +223,7 @@ class ScreenSetup(QWidget):
             self._match_status.setStyleSheet(f"color: {COLORS['warning']};")
             return
 
-        image = self._capture.capture_iphone_mirroring()
+        image = self._capture.capture_target("[Entire Screen]")
         if image is None:
             self._match_status.setText("No window")
             self._match_status.setStyleSheet(f"color: {COLORS['warning']};")
