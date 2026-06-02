@@ -694,6 +694,10 @@ class MainWindow(QMainWindow):
             self._table.setItem(i, 0, chk_item)
 
             has_screenshot = "📸" if action.screenshot_path else "—"
+            if action.trigger_type == "after_trigger":
+                match_cell = f"after #{action.after_index}"
+            else:
+                match_cell = f"{int(action.threshold * 100)}%{has_screenshot}"
             if action.action_type == "close_app":
                 type_label = "Close App" + (" (home)" if action.close_method == "home" else " (quit)")
             elif action.action_type == "open_app":
@@ -702,7 +706,7 @@ class MainWindow(QMainWindow):
                 type_label = type_names.get(action.click_type, action.click_type)
             items = [
                 QTableWidgetItem(str(i + 1)),
-                QTableWidgetItem(f"{int(action.threshold * 100)}%{has_screenshot}"),
+                QTableWidgetItem(match_cell),
                 None,  # Placeholder for the Current% Progress Bar
                 QTableWidgetItem(f"{action.delay_ms}"),
                 QTableWidgetItem(str(action.x)),
@@ -822,6 +826,8 @@ class MainWindow(QMainWindow):
         dialog = AddClickDialog(
             picker=self._preview,
             screen_capture=self._screen_capture,
+            actions=self._timeline.actions,
+            current_index=None,
             parent=self,
         )
         if dialog.exec():
@@ -850,6 +856,8 @@ class MainWindow(QMainWindow):
             picker=self._preview,
             action=actions[row],
             screen_capture=self._screen_capture,
+            actions=self._timeline.actions,
+            current_index=row,
             parent=self,
         )
         if dialog.exec():
@@ -1414,9 +1422,56 @@ class MainWindow(QMainWindow):
 
         wait_ms(action.post_delay_ms)
 
+    def _execute_action(self, action, i, cached, reason):
+        """Perform an action's effect (click or app-lifecycle). Shared by recognition
+        and 'after another trigger' firing. Does not handle pre-delay or cooldown."""
+        self._signal_bridge.highlight_action.emit(i)
+
+        # App-lifecycle actions (close / open the mirrored iPhone app)
+        if action.action_type in ("close_app", "open_app"):
+            self._perform_app_action(action, cached)
+            self._signal_bridge.action_triggered.emit(i, reason)
+            self._signal_bridge.status_update.emit(
+                f"✅ #{i+1} '{action.label}' — {action.action_type}"
+            )
+            return
+
+        # Bring window to front on the main thread (AppKit requirement)
+        is_bg_click = self._settings.background_click
+        if not is_bg_click:
+            self._bring_to_front_done.clear()
+            self._signal_bridge.bring_to_front.emit()
+            self._bring_to_front_done.wait(timeout=2.0)
+            time.sleep(0.05)
+
+        clicks = max(1, action.repeat_count)
+        click_interval = 1.0 / clicks if clicks > 1 else 0
+        cx_pts, cy_pts = self._scale_to_window(action, cached)
+        self._logger.click(
+            f"Click #{i+1}: ({cx_pts}, {cy_pts}) x{clicks}",
+            f"type={action.click_type}, bg={is_bg_click}"
+        )
+        for click_n in range(clicks):
+            if self._stop_event.is_set():
+                return
+            self._click_engine.click_at(
+                cx_pts, cy_pts,
+                click_type=action.click_type,
+                duration_ms=action.duration_ms,
+                background=is_bg_click,
+                stop_event=self._stop_event,
+            )
+            if click_n < clicks - 1 and click_interval > 0:
+                self._stop_event.wait(click_interval)
+
+        self._signal_bridge.action_triggered.emit(i, reason)
+        self._signal_bridge.status_update.emit(
+            f"✅ #{i+1} '{action.label}' clicked x{clicks}"
+        )
+
     def _automation_loop(self):
         """Simple model: capture screen → compare ALL action screenshots → click first match → repeat.
-        No sequential logic, no loop counting, no triggered tracking.
+        Also fires 'after another trigger' actions when their delay elapses.
         Runs forever until stopped.
         """
         import cv2
@@ -1424,11 +1479,22 @@ class MainWindow(QMainWindow):
 
         actions = self._timeline.actions
 
+        # Per-action last-trigger timestamps (monotonic) for "after another trigger" actions
+        self._trigger_times = {}
+        # Latched countdown start per follower (so a continuously-matching reference
+        # action doesn't keep resetting the delay)
+        self._after_start = {}
+
         # Preload all action reference images
         action_refs = {}  # index -> numpy image
         for i, action in enumerate(actions):
             if not action.enabled:
                 self._logger.info(f"#{i+1} ({action.label}) is DISABLED, skipping")
+                continue
+            if action.trigger_type == "after_trigger":
+                self._logger.info(
+                    f"#{i+1} ({action.label}) fires {action.delay_ms}ms after #{action.after_index}"
+                )
                 continue
             ref_img = None
             if action.screenshot_path:
@@ -1450,7 +1516,7 @@ class MainWindow(QMainWindow):
         # Parse text patterns once
         action_text_patterns = {}
         for i, action in enumerate(actions):
-            if not action.enabled:
+            if not action.enabled or action.trigger_type == "after_trigger":
                 continue
             if action.match_texts and action.match_texts.strip():
                 patterns = [t.strip() for t in action.match_texts.split(",") if t.strip()]
@@ -1482,6 +1548,41 @@ class MainWindow(QMainWindow):
                     continue
 
 
+
+                # 1c. Fire any due "after another trigger" actions (time-based, no recognition)
+                now = time.monotonic()
+                fired_after = False
+                for i, action in enumerate(actions):
+                    if self._stop_event.is_set():
+                        return
+                    if not action.enabled or action.trigger_type != "after_trigger":
+                        continue
+                    ref_last = self._trigger_times.get(action.after_index - 1)
+                    if ref_last is None:
+                        continue  # the action it follows hasn't triggered yet
+                    start = self._after_start.get(i)
+                    if start is None:
+                        # Arm the countdown when the referenced action triggers after our
+                        # last fire — latched, so a continuously-matching ref doesn't reset it
+                        if ref_last > self._trigger_times.get(i, -1.0):
+                            start = ref_last
+                            self._after_start[i] = start
+                        else:
+                            continue
+                    if (now - start) < (action.delay_ms / 1000.0):
+                        continue  # delay not elapsed yet
+                    self._logger.match(
+                        f"#{i+1} '{action.label}' fired {action.delay_ms}ms after #{action.after_index}",
+                        ""
+                    )
+                    self._execute_action(action, i, cached, f"after #{action.after_index} +{action.delay_ms}ms")
+                    self._trigger_times[i] = time.monotonic()
+                    self._after_start[i] = None  # consumed; re-arm on the next ref trigger
+                    fired_after = True
+                    break
+                if fired_after:
+                    self._stop_event.wait(0.5)
+                    continue
 
                 cur_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -1547,18 +1648,17 @@ class MainWindow(QMainWindow):
                     sim_scores, best_match_idx
                 )
 
-                # 4. If we found a match → click it
+                # 4. If we found a match → fire it
                 if best_match_idx >= 0:
                     action = actions[best_match_idx]
                     i = best_match_idx
 
-                    self._signal_bridge.highlight_action.emit(i)
                     self._logger.match(
                         f"#{i+1} '{action.label}' matched via {best_reason}",
                         f"threshold: {action.threshold*100:.0f}%"
                     )
 
-                    # Wait delay
+                    # Wait delay after match
                     if action.delay_ms > 0:
                         self._signal_bridge.status_update.emit(
                             f"⏳ #{i+1} waiting {action.delay_ms}ms..."
@@ -1567,51 +1667,10 @@ class MainWindow(QMainWindow):
                         if self._stop_event.is_set():
                             return
 
-                    # App-lifecycle actions (close / open the mirrored iPhone app)
-                    if action.action_type in ("close_app", "open_app"):
-                        self._perform_app_action(action, cached)
-                        self._signal_bridge.action_triggered.emit(i, best_reason)
-                        self._signal_bridge.status_update.emit(
-                            f"✅ #{i+1} '{action.label}' — {action.action_type}"
-                        )
-                        self._stop_event.wait(1.0)
-                        continue
+                    self._execute_action(action, i, cached, best_reason)
+                    self._trigger_times[i] = time.monotonic()
 
-                    # Bring window to front on the main thread (AppKit requirement)
-                    is_bg_click = self._settings.background_click
-                    if not is_bg_click:
-                        self._bring_to_front_done.clear()
-                        self._signal_bridge.bring_to_front.emit()
-                        self._bring_to_front_done.wait(timeout=2.0)
-                        time.sleep(0.05)
-
-                    # Execute clicks (repeat_count times within 1s window)
-                    clicks = max(1, action.repeat_count)
-                    click_interval = 1.0 / clicks if clicks > 1 else 0
-                    cx_pts, cy_pts = self._scale_to_window(action, cached)
-                    self._logger.click(
-                        f"Click #{i+1}: ({cx_pts}, {cy_pts}) x{clicks}",
-                        f"type={action.click_type}, delay={action.delay_ms}ms, bg={is_bg_click}"
-                    )
-                    for click_n in range(clicks):
-                        if self._stop_event.is_set():
-                            return
-                        self._click_engine.click_at(
-                            cx_pts, cy_pts,
-                            click_type=action.click_type,
-                            duration_ms=action.duration_ms,
-                            background=is_bg_click,
-                            stop_event=self._stop_event,
-                        )
-                        if click_n < clicks - 1 and click_interval > 0:
-                            self._stop_event.wait(click_interval)
-
-                    self._signal_bridge.action_triggered.emit(i, best_reason)
-                    self._signal_bridge.status_update.emit(
-                        f"✅ #{i+1} '{action.label}' clicked x{clicks}"
-                    )
-
-                    # Cooldown — screen will change after click
+                    # Cooldown — screen will change after the action
                     self._stop_event.wait(1.0)
                 else:
                     # No match — show scanning status

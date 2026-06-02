@@ -39,6 +39,9 @@ class ClickAction:
     open_method: str = "spotlight"    # "spotlight" (type name) | "tap_icon" (click x,y)
     app_name: str = ""                # App name to type in Spotlight (open_app)
     post_delay_ms: int = 0            # Wait after the app action completes
+    # ── Trigger ──
+    trigger_type: str = "recognition"  # "recognition" (screenshot/text) | "after_trigger"
+    after_index: int = 1               # 1-based # of the action this one follows (after_trigger)
 
     def to_dict(self) -> dict:
         d = {
@@ -63,6 +66,10 @@ class ClickAction:
             d["open_method"] = self.open_method
             d["app_name"] = self.app_name
             d["post_delay_ms"] = self.post_delay_ms
+        # Only persist trigger fields for non-recognition triggers
+        if self.trigger_type != "recognition":
+            d["trigger_type"] = self.trigger_type
+            d["after_index"] = self.after_index
         return d
 
     @classmethod
@@ -86,6 +93,8 @@ class ClickAction:
             open_method=data.get("open_method", "spotlight"),
             app_name=data.get("app_name", ""),
             post_delay_ms=data.get("post_delay_ms", 0),
+            trigger_type=data.get("trigger_type", "recognition"),
+            after_index=data.get("after_index", 1),
         )
 
 

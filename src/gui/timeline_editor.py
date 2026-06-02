@@ -22,8 +22,11 @@ class AddClickDialog(QDialog):
     """Dialog for adding/editing a click action with embedded screenshot picker."""
 
     def __init__(self, picker: ClickPositionPicker = None,
-                 action: ClickAction = None, screen_capture=None, parent=None):
+                 action: ClickAction = None, screen_capture=None,
+                 actions=None, current_index=None, parent=None):
         super().__init__(parent)
+        self._all_actions = actions or []
+        self._current_index = current_index
         self.setWindowTitle("Add Click Action" if action is None else "Edit Click Action")
         self.setMinimumSize(600, 700)
 
@@ -102,6 +105,27 @@ class AddClickDialog(QDialog):
         self._action_combo.currentIndexChanged.connect(self._update_field_visibility)
         form.addRow("Action:", self._action_combo)
 
+        # Trigger type — recognition (screenshot/text) vs delay after another action
+        self._trigger_combo = QComboBox()
+        self._trigger_combo.addItems(["When screen matches", "After another trigger (delay)"])
+        if action and action.trigger_type == "after_trigger":
+            self._trigger_combo.setCurrentIndex(1)
+        self._trigger_combo.currentIndexChanged.connect(self._update_field_visibility)
+        form.addRow("Trigger:", self._trigger_combo)
+
+        # "After another trigger": which action this one follows
+        self._after_combo = QComboBox()
+        for j, act in enumerate(self._all_actions):
+            if self._current_index is not None and j == self._current_index:
+                continue  # can't follow itself
+            lbl = act.label or f"Action {j+1}"
+            self._after_combo.addItem(f"#{j+1} — {lbl}", j + 1)
+        if action and action.trigger_type == "after_trigger":
+            k = self._after_combo.findData(action.after_index)
+            if k >= 0:
+                self._after_combo.setCurrentIndex(k)
+        form.addRow("After action:", self._after_combo)
+
         # Match threshold (per-action)
         thresh_layout = QHBoxLayout()
         self._threshold_slider = QSlider(Qt.Orientation.Horizontal)
@@ -113,6 +137,7 @@ class AddClickDialog(QDialog):
         self._threshold_label.setFixedWidth(40)
         thresh_layout.addWidget(self._threshold_label)
         form.addRow("Match threshold:", thresh_layout)
+        self._thresh_layout = thresh_layout
 
         # Delay after match
         self._delay_spin = QSpinBox()
@@ -245,12 +270,13 @@ class AddClickDialog(QDialog):
         )
 
     def _update_field_visibility(self):
-        """Show/hide form rows based on the selected action type."""
+        """Show/hide form rows based on the selected action type and trigger type."""
         idx = self._action_combo.currentIndex()  # 0=Click, 1=Close App, 2=Open App
         is_click = idx == 0
         is_close = idx == 1
         is_open = idx == 2
         open_is_spotlight = self._open_method_combo.currentIndex() == 0
+        is_after = self._trigger_combo.currentIndex() == 1  # "after another trigger"
 
         # Position used by Click and by Open App "tap icon"
         self._form.setRowVisible(self._coord_layout, is_click or (is_open and not open_is_spotlight))
@@ -262,6 +288,14 @@ class AddClickDialog(QDialog):
         self._form.setRowVisible(self._open_method_combo, is_open)
         self._form.setRowVisible(self._app_name_edit, is_open and open_is_spotlight)
         self._form.setRowVisible(self._post_delay_spin, is_close or is_open)
+
+        # Trigger-specific rows: recognition fields vs "after another trigger"
+        self._form.setRowVisible(self._thresh_layout, not is_after)
+        self._form.setRowVisible(self._match_texts_edit, not is_after)
+        self._form.setRowVisible(self._after_combo, is_after)
+        delay_lbl = self._form.labelForField(self._delay_spin)
+        if delay_lbl is not None:
+            delay_lbl.setText("Delay after trigger:" if is_after else "Delay after match:")
 
     def _on_threshold_changed(self, value: int):
         self._threshold_label.setText(f"{value}%")
@@ -292,6 +326,8 @@ class AddClickDialog(QDialog):
             open_method="tap_icon" if self._open_method_combo.currentIndex() == 1 else "spotlight",
             app_name=self._app_name_edit.text().strip(),
             post_delay_ms=self._post_delay_spin.value(),
+            trigger_type="after_trigger" if self._trigger_combo.currentIndex() == 1 else "recognition",
+            after_index=self._after_combo.currentData() if self._after_combo.currentData() else 1,
         )
 
     def get_screenshot(self):
