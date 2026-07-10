@@ -108,11 +108,17 @@ class Project:
         os.makedirs(d, exist_ok=True)
         return d
 
+    _screenshot_seq = 0  # class-wide monotonic suffix (same-ms collision guard)
+
     def save_action_screenshot(self, index: int, image: np.ndarray) -> str:
         """Save a screenshot for a specific click action. Returns the file path.
-        Uses a unique timestamp-based name to avoid conflicts on reorder/edit."""
+        Uses a unique timestamp-based name to avoid conflicts on reorder/edit.
+        BUGFIX: a millisecond timestamp alone collided (and silently clobbered)
+        when two screenshots were saved within the same ms — append a
+        monotonic sequence number."""
         import time as _time
-        unique_id = f"{index}_{int(_time.time() * 1000)}"
+        Project._screenshot_seq += 1
+        unique_id = f"{index}_{int(_time.time() * 1000)}_{Project._screenshot_seq}"
         path = os.path.join(self.screenshots_dir, f"action_{unique_id}.png")
         cv2.imwrite(path, image)
         return path
