@@ -963,12 +963,15 @@ class MainWindow(QMainWindow):
     def _import_timeline(self):
         filepath, _ = QFileDialog.getOpenFileName(
             self, "Import Timeline", "",
-            "JSON Files (*.json);;All Files (*)"
+            "Timeline Files (*.zip *.json);;All Files (*)"
         )
         if not filepath:
             return
         try:
-            loaded = Timeline.load(filepath)
+            if filepath.lower().endswith(".zip"):
+                loaded = Timeline.load_package(filepath, self._project.screenshots_dir)
+            else:
+                loaded = Timeline.load(filepath)
             self._timeline.clear()
             self._timeline.name = loaded.name
             self._timeline.loop = loaded.loop
@@ -986,11 +989,17 @@ class MainWindow(QMainWindow):
 
     def _export_timeline(self):
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Export Timeline", f"{self._timeline.name}.json",
-            "JSON Files (*.json);;All Files (*)"
+            self, "Export Timeline", f"{self._timeline.name}.zip",
+            "Timeline Package with screenshots (*.zip);;JSON only (*.json)"
         )
-        if filepath:
+        if not filepath:
+            return
+        if filepath.lower().endswith(".json"):
             self._timeline.save(filepath)
+            self._logger.info(f"Exported timeline (JSON only, no screenshots): {filepath}")
+        else:
+            self._timeline.export_package(filepath)
+            self._logger.info(f"Exported self-contained timeline package: {filepath}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     #  Log Viewer (inline)

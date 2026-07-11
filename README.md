@@ -63,7 +63,7 @@ Supported click types: **Single Click**, **Double Click**, **Long Press** (confi
 - ⏱️ **Infinite Long Presses** — Hold specific clicks for milliseconds to hours, safely interruptible
 - 🔄 **Loop support** — repeat the sequence N times or infinitely
 - 💾 **Auto-save** — all project data persists automatically between sessions
-- 📤 **Import/Export** — save and share timelines as JSON files
+- 📤 **Import/Export** — share timelines as self-contained `.zip` packages (screenshots bundled, works across machines) or plain JSON
 - 📋 **Activity log** — color-coded real-time log of all events
 - 🎨 **Dark theme** — polished, modern UI
 

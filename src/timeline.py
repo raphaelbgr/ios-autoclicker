@@ -4,8 +4,10 @@ Defines data models for click actions and provides execution logic.
 """
 
 import json
+import os
 import time
 import threading
+import zipfile
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Callable
 from enum import Enum
@@ -193,6 +195,53 @@ class Timeline:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls.from_dict(data)
+
+    def export_package(self, filepath: str):
+        """Export a self-contained .zip package: timeline.json plus every
+        referenced screenshot, with screenshot paths rewritten to archive-
+        relative ones so the package works on any machine.
+
+        Screenshots whose file is missing on disk are skipped (the action is
+        still exported with its original path)."""
+        data = self.to_dict()
+        with zipfile.ZipFile(filepath, "w", zipfile.ZIP_DEFLATED) as zf:
+            bundled = {}  # source path -> arcname (dedupe shared screenshots)
+            for entry in data["actions"]:
+                path = entry.get("screenshot_path", "")
+                if not path or not os.path.exists(path):
+                    continue
+                arcname = bundled.get(path)
+                if arcname is None:
+                    arcname = f"screenshots/{os.path.basename(path)}"
+                    zf.write(path, arcname)
+                    bundled[path] = arcname
+                entry["screenshot_path"] = arcname
+            zf.writestr("timeline.json", json.dumps(data, indent=2))
+
+    @classmethod
+    def load_package(cls, filepath: str, screenshots_dir: str) -> "Timeline":
+        """Load a .zip package created by export_package, extracting its
+        bundled screenshots into screenshots_dir and rewriting the actions'
+        screenshot paths to the extracted absolute paths.
+
+        Only archive-relative paths present in the zip are extracted (by
+        basename, so a crafted archive cannot write outside screenshots_dir).
+        Absolute paths in the JSON are left untouched — legacy exports keep
+        working when their referenced files still exist."""
+        with zipfile.ZipFile(filepath, "r") as zf:
+            data = json.loads(zf.read("timeline.json").decode("utf-8"))
+            timeline = cls.from_dict(data)
+            members = set(zf.namelist())
+            os.makedirs(screenshots_dir, exist_ok=True)
+            for action in timeline._actions:
+                path = action.screenshot_path
+                if not path or os.path.isabs(path) or path not in members:
+                    continue
+                dest = os.path.join(screenshots_dir, os.path.basename(path))
+                with zf.open(path) as src, open(dest, "wb") as out:
+                    out.write(src.read())
+                action.screenshot_path = dest
+        return timeline
 
 
 class TimelineExecutor:

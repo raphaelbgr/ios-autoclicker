@@ -1,6 +1,7 @@
 """Tests for src/timeline.py — ClickAction / Timeline serialization + TimelineExecutor."""
 
 import json
+import os
 import threading
 import time
 
@@ -218,3 +219,110 @@ class TestTimelineExecutor:
         assert done.wait(2.0)
         assert fired == ["a0", "a1"]
         ex.stop()
+
+
+# ──────────────────────────────────────────────────────────────
+#  Self-contained .zip package export/import
+# ──────────────────────────────────────────────────────────────
+
+class TestTimelinePackage:
+    def _timeline_with_screenshots(self, tmp_path, n=2):
+        tl = Timeline("Pkg")
+        tl.loop = True
+        tl.loop_count = 3
+        for i in range(n):
+            p = tmp_path / f"shot_{i}.png"
+            p.write_bytes(b"PNGDATA-%d" % i)
+            tl.add_action(ClickAction(
+                delay_ms=100, x=i, y=i, label=f"a{i}", screenshot_path=str(p)))
+        return tl
+
+    def test_package_roundtrip(self, tmp_path):
+        tl = self._timeline_with_screenshots(tmp_path)
+        pkg = tmp_path / "out.zip"
+        tl.export_package(str(pkg))
+
+        dest = tmp_path / "imported_shots"
+        loaded = Timeline.load_package(str(pkg), str(dest))
+
+        assert loaded.name == "Pkg"
+        assert loaded.loop is True
+        assert loaded.loop_count == 3
+        assert len(loaded.actions) == 2
+        for i, a in enumerate(loaded.actions):
+            assert os.path.isabs(a.screenshot_path)
+            assert a.screenshot_path.startswith(str(dest))
+            with open(a.screenshot_path, "rb") as f:
+                assert f.read() == b"PNGDATA-%d" % i
+
+    def test_package_is_machine_independent(self, tmp_path):
+        """The JSON inside the zip must not contain absolute source paths."""
+        import zipfile
+        tl = self._timeline_with_screenshots(tmp_path)
+        pkg = tmp_path / "out.zip"
+        tl.export_package(str(pkg))
+        with zipfile.ZipFile(pkg) as zf:
+            data = json.loads(zf.read("timeline.json"))
+            names = set(zf.namelist())
+        for entry in data["actions"]:
+            assert entry["screenshot_path"].startswith("screenshots/")
+            assert entry["screenshot_path"] in names
+
+    def test_missing_screenshot_not_bundled(self, tmp_path):
+        import zipfile
+        tl = Timeline("Pkg")
+        tl.add_action(ClickAction(
+            delay_ms=0, x=1, y=1, screenshot_path="/nonexistent/gone.png"))
+        pkg = tmp_path / "out.zip"
+        tl.export_package(str(pkg))
+        with zipfile.ZipFile(pkg) as zf:
+            assert zf.namelist() == ["timeline.json"]
+            data = json.loads(zf.read("timeline.json"))
+        # original path preserved so a same-machine import still works
+        assert data["actions"][0]["screenshot_path"] == "/nonexistent/gone.png"
+        loaded = Timeline.load_package(str(pkg), str(tmp_path / "shots"))
+        assert loaded.actions[0].screenshot_path == "/nonexistent/gone.png"
+
+    def test_shared_screenshot_deduped(self, tmp_path):
+        import zipfile
+        p = tmp_path / "shared.png"
+        p.write_bytes(b"SHARED")
+        tl = Timeline("Pkg")
+        for i in range(2):
+            tl.add_action(ClickAction(
+                delay_ms=0, x=i, y=i, screenshot_path=str(p)))
+        pkg = tmp_path / "out.zip"
+        tl.export_package(str(pkg))
+        with zipfile.ZipFile(pkg) as zf:
+            assert sorted(zf.namelist()) == ["screenshots/shared.png", "timeline.json"]
+        loaded = Timeline.load_package(str(pkg), str(tmp_path / "shots"))
+        assert (loaded.actions[0].screenshot_path
+                == loaded.actions[1].screenshot_path)
+
+    def test_zip_slip_cannot_escape_screenshots_dir(self, tmp_path):
+        """A crafted archive with a traversal path must not write outside
+        screenshots_dir (extraction is by basename)."""
+        import zipfile
+        evil_member = "screenshots/../evil.png"
+        pkg = tmp_path / "evil.zip"
+        with zipfile.ZipFile(pkg, "w") as zf:
+            zf.writestr(evil_member, b"EVIL")
+            zf.writestr("timeline.json", json.dumps({
+                "name": "Evil", "loop": False, "loop_count": 1,
+                "actions": [{"delay_ms": 0, "x": 1, "y": 1,
+                             "screenshot_path": evil_member}],
+            }))
+        dest = tmp_path / "safe" / "shots"
+        loaded = Timeline.load_package(str(pkg), str(dest))
+        assert not (tmp_path / "safe" / "evil.png").exists()
+        assert loaded.actions[0].screenshot_path == str(dest / "evil.png")
+        assert (dest / "evil.png").read_bytes() == b"EVIL"
+
+    def test_actions_without_screenshots_roundtrip(self, tmp_path):
+        tl = Timeline("NoShots")
+        tl.add_action(ClickAction(delay_ms=50, x=5, y=6, label="plain"))
+        pkg = tmp_path / "out.zip"
+        tl.export_package(str(pkg))
+        loaded = Timeline.load_package(str(pkg), str(tmp_path / "shots"))
+        assert loaded.actions[0].label == "plain"
+        assert loaded.actions[0].screenshot_path == ""
