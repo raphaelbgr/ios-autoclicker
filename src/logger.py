@@ -55,8 +55,15 @@ class AppLogger:
                 log_dir,
                 f"autoclicker_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
             )
-            self._file_logger = logging.getLogger("autoclicker_file")
+            # BUGFIX: use a per-instance logger name. The old shared name
+            # ("autoclicker_file") accumulated one FileHandler per AppLogger
+            # instance, so every new instance duplicated writes into all
+            # previously opened log files.
+            self._file_logger = logging.getLogger(f"autoclicker_file_{id(self)}")
             self._file_logger.setLevel(logging.DEBUG)
+            self._file_logger.propagate = False
+            for old in list(self._file_logger.handlers):
+                self._file_logger.removeHandler(old)
             handler = logging.FileHandler(log_file, encoding="utf-8")
             handler.setFormatter(logging.Formatter("%(message)s"))
             self._file_logger.addHandler(handler)
