@@ -1,0 +1,13 @@
+{
+  "flow": "app.startup",
+  "function": "__init__",
+  "events": [
+    "app.start",
+    "project.settings.loaded",
+    "project.timeline.loaded",
+    "app.ui.ready",
+    "permissions.checked",
+    "window.detected"
+  ],
+  "extracted_from": "src/gui/main_window.py"
+}

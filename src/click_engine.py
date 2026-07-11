@@ -24,6 +24,7 @@ from Quartz import (
 from Quartz.CoreGraphics import CGPointMake
 
 from src.screen_capture import WindowInfo, ScreenCapture
+from src.tracking import track
 
 
 class ClickType:
@@ -105,6 +106,8 @@ class ClickEngine:
                 self._execute_with_cursor_restore(background, self._double_click, abs_x, abs_y)
             elif click_type == ClickType.LONG_PRESS:
                 self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms, stop_event)
+            track("click.posted", x=abs_x, y=abs_y,
+                  click_type=click_type, background=background)
             return True
         except Exception:
             return False
@@ -125,6 +128,8 @@ class ClickEngine:
                 self._execute_with_cursor_restore(background, self._double_click, abs_x, abs_y)
             elif click_type == ClickType.LONG_PRESS:
                 self._execute_with_cursor_restore(background, self._long_press, abs_x, abs_y, duration_ms, stop_event)
+            track("click.posted", x=abs_x, y=abs_y,
+                  click_type=click_type, background=background)
             return True
         except Exception:
             return False

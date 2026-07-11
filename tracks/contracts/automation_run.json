@@ -1,0 +1,15 @@
+{
+  "flow": "automation.run",
+  "function": "_automation_loop",
+  "events": [
+    "automation.started",
+    "automation.refs.loaded",
+    "automation.scan.tick",
+    "automation.match.found",
+    "automation.action.execute",
+    "click.posted",
+    "automation.action.done",
+    "automation.stopped"
+  ],
+  "extracted_from": "src/gui/main_window.py"
+}

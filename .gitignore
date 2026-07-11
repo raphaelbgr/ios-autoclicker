@@ -33,5 +33,9 @@ logs/
 *.json
 !package.json
 
+# Tracking stream (runtime data) — contracts stay tracked
+tracks/tracks.jsonl
+!tracks/contracts/*.json
+
 # Keep requirements.txt tracked
 !requirements.txt

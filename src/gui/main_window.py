@@ -26,6 +26,7 @@ from src.logger import AppLogger, LogCategory
 from src.project import Project, ProjectSettings
 from src.gui.click_position_picker import ClickPositionPicker
 from src.gui.styles import STYLESHEET, COLORS
+from src.tracking import track, new_trace, tracked_flow
 
 
 # ── Color map for log categories ──
@@ -56,12 +57,28 @@ class SignalBridge(QObject):
 class MainWindow(QMainWindow):
     """Main application window — single unified view, auto-persistence."""
 
+    @tracked_flow("app.startup", events=[
+        "app.start",
+        "project.settings.loaded",
+        "project.timeline.loaded",
+        "app.ui.ready",
+        "permissions.checked",
+        "window.detected",
+    ])
     def __init__(self):
         super().__init__()
+
+        new_trace("app")
+        track("app.start")
 
         # ── Project & persistence ──
         self._project = Project("default")
         self._settings = self._project.load_settings()
+        track("project.settings.loaded",
+              project=self._project.name,
+              threshold=self._settings.threshold,
+              interval_ms=self._settings.monitor_interval_ms,
+              target=self._settings.target_app)
 
         # ── Core components ──
         self._logger = AppLogger(log_dir="logs")
@@ -72,6 +89,9 @@ class MainWindow(QMainWindow):
         # Load or create timeline
         saved_timeline = self._project.load_timeline()
         self._timeline = saved_timeline if saved_timeline else Timeline("My Timeline")
+        track("project.timeline.loaded",
+              name=self._timeline.name,
+              actions=len(self._timeline.actions))
 
         self._timeline_executor = TimelineExecutor()
 
@@ -118,6 +138,7 @@ class MainWindow(QMainWindow):
 
         self._setup_window()
         self._setup_ui()
+        track("app.ui.ready")
         self._refresh_project_combo()
         self._load_saved_data()
         self._check_permissions()
@@ -514,6 +535,8 @@ class MainWindow(QMainWindow):
         self._settings.monitor_interval_ms = self._monitor_interval_ms
         self._settings.background_click = self._bg_click_check.isChecked()
         self._project.save_settings(self._settings)
+        track("project.saved", project=self._project.name,
+              actions=len(self._timeline.actions))
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     #  Window Detection & Screen Capture
@@ -567,6 +590,9 @@ class MainWindow(QMainWindow):
         self._window_picker.setCurrentIndex(selected_idx)
         self._window_picker.blockSignals(False)
         self._refresh_cached_window(selected_idx)
+        track("window.detected",
+              windows=self._window_picker.count() - 1,
+              selected=self._window_picker.itemData(selected_idx))
 
     def _refresh_cached_window(self, index):
         """Update the internal cached window from picker index WITHOUT saving settings."""
@@ -612,8 +638,16 @@ class MainWindow(QMainWindow):
             self._preview.set_image(image)
             self._auto_save()
             self._logger.info("Reference screenshot captured and saved")
+            track("reference.captured", target=self._settings.target_app)
         else:
-            self._window_status.setText("❌ Capture failed — detect window first")
+            # BUGFIX: was self._window_status (exists only in ScreenSetupPanel)
+            # → AttributeError whenever a capture failed.
+            self._status_label.setText("❌ Capture failed — detect window first")
+            self._logger.error(
+                "Capture failed — target window not found or inaccessible",
+                self._settings.target_app,
+            )
+            track("capture.failed", target=self._settings.target_app)
 
     def _upload_screenshot(self):
         filepath, _ = QFileDialog.getOpenFileName(
@@ -997,12 +1031,16 @@ class MainWindow(QMainWindow):
 
     def _check_permissions(self):
         has_screen = self._screen_capture.check_screen_recording_permission()
+        has_accessibility = ClickEngine.has_post_event_permission()
+        track("permissions.checked",
+              screen_recording=bool(has_screen),
+              accessibility=bool(has_accessibility))
         if not has_screen:
             self._logger.warning(
                 "Screen Recording permission may not be granted",
                 "System Settings → Privacy & Security → Screen Recording"
             )
-        if not ClickEngine.has_post_event_permission():
+        if not has_accessibility:
             self._logger.warning(
                 "⚠️ Accessibility NOT granted — clicks will be silently ignored by macOS",
                 "System Settings → Privacy & Security → Accessibility → enable Python / this app"
@@ -1213,6 +1251,13 @@ class MainWindow(QMainWindow):
             f"threshold: {self._recognizer.threshold * 100:.0f}%"
         )
 
+        new_trace("automation")
+        track("automation.started",
+              actions=len(actions),
+              interval_ms=self._monitor_interval_ms,
+              background_click=self._settings.background_click,
+              target=self._settings.target_app)
+
         self._automation_thread = threading.Thread(
             target=self._automation_loop, daemon=True,
         )
@@ -1227,6 +1272,7 @@ class MainWindow(QMainWindow):
         # Animate stop button as "stopping..."
         self._stop_btn.setText("⏳  Stopping...")
         self._logger.log(LogCategory.STATE_CHANGE, "Automation stop requested")
+        track("automation.stop.requested")
 
     def _pulse_buttons(self):
         """Toggle a pulsing glow on the Stop button while automation is running."""
@@ -1426,6 +1472,9 @@ class MainWindow(QMainWindow):
         """Perform an action's effect (click or app-lifecycle). Shared by recognition
         and 'after another trigger' firing. Does not handle pre-delay or cooldown."""
         self._signal_bridge.highlight_action.emit(i)
+        track("automation.action.execute",
+              index=i, label=action.label,
+              action_type=action.action_type, reason=reason)
 
         # App-lifecycle actions (close / open the mirrored iPhone app)
         if action.action_type in ("close_app", "open_app"):
@@ -1434,6 +1483,7 @@ class MainWindow(QMainWindow):
             self._signal_bridge.status_update.emit(
                 f"✅ #{i+1} '{action.label}' — {action.action_type}"
             )
+            track("automation.action.done", index=i, action_type=action.action_type)
             return
 
         # Bring window to front on the main thread (AppKit requirement)
@@ -1468,7 +1518,18 @@ class MainWindow(QMainWindow):
         self._signal_bridge.status_update.emit(
             f"✅ #{i+1} '{action.label}' clicked x{clicks}"
         )
+        track("automation.action.done", index=i, clicks=clicks)
 
+    @tracked_flow("automation.run", events=[
+        "automation.started",
+        "automation.refs.loaded",
+        "automation.scan.tick",
+        "automation.match.found",
+        "automation.action.execute",
+        "click.posted",
+        "automation.action.done",
+        "automation.stopped",
+    ])
     def _automation_loop(self):
         """Simple model: capture screen → compare ALL action screenshots → click first match → repeat.
         Also fires 'after another trigger' actions when their delay elapses.
@@ -1526,6 +1587,9 @@ class MainWindow(QMainWindow):
         self._logger.info(
             f"Ready: {len(action_refs)} screenshots, {len(action_text_patterns)} text matchers"
         )
+        track("automation.refs.loaded",
+              refs=len(action_refs),
+              text_matchers=len(action_text_patterns))
 
         try:
             while not self._stop_event.is_set():
@@ -1544,6 +1608,7 @@ class MainWindow(QMainWindow):
                     friendly = self._settings.target_app.split("::")[1] if "::" in self._settings.target_app else self._settings.target_app
                     self._logger.warning(f"Cannot capture '{friendly}' — window not found or inaccessible")
                     self._signal_bridge.status_update.emit("⚠️ No window")
+                    track("automation.capture.miss", target=friendly)
                     self._stop_event.wait(self._monitor_interval_ms / 1000.0)
                     continue
 
@@ -1647,6 +1712,9 @@ class MainWindow(QMainWindow):
                 self._signal_bridge.match_update.emit(
                     sim_scores, best_match_idx
                 )
+                track("automation.scan.tick",
+                      best_idx=best_match_idx,
+                      best_sim=round(max(sim_scores) if sim_scores else 0.0, 4))
 
                 # 4. If we found a match → fire it
                 if best_match_idx >= 0:
@@ -1657,6 +1725,10 @@ class MainWindow(QMainWindow):
                         f"#{i+1} '{action.label}' matched via {best_reason}",
                         f"threshold: {action.threshold*100:.0f}%"
                     )
+                    track("automation.match.found",
+                          index=i, label=action.label,
+                          reason=best_reason,
+                          similarity=round(best_similarity, 4))
 
                     # Wait delay after match
                     if action.delay_ms > 0:
@@ -1681,7 +1753,9 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self._logger.error(f"Automation error: {e}")
+            track("automation.error", error=str(e))
         finally:
+            track("automation.stopped")
             self._signal_bridge.automation_stopped.emit()
 
     def _on_match_update(self, sim_scores: list, best_match_idx: int):
