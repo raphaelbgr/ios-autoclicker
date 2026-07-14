@@ -4,9 +4,12 @@ A macOS desktop application that automates taps on your iPhone through the **iPh
 
 ![macOS](https://img.shields.io/badge/macOS-15.0+-black?logo=apple)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
+![Tests](https://img.shields.io/badge/tests-125%20passing-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ![iOS Auto-Clicker Screenshot](docs/screenshot.png)
+
+*The main window: target-window picker and live preview on the left, the click timeline with per-action match progress on the right, automation controls along the bottom.*
 
 ## How It Works
 
@@ -84,7 +87,7 @@ The app needs two permissions (it will guide you on first launch):
 
 > Add your **Terminal app** (or iTerm, etc.) to both permission lists.
 
-## Installation
+## Running the App
 
 ```bash
 git clone https://github.com/raphaelbgr/ios-autoclicker.git
@@ -92,15 +95,17 @@ cd ios-autoclicker
 ./run.sh
 ```
 
-That's it. The `run.sh` script automatically:
-1. Creates a Python virtual environment
-2. Installs all dependencies
-3. Launches the app
+That's it. `run.sh` is idempotent — run it every time. It creates the virtualenv if missing, installs/updates dependencies, and launches the app.
 
-### macOS Desktop App Shortcut
-A native `.app` bundle named **`iOS AutoClicker.app`** with a custom icon is included in the project folder. You can double-click this app or use the provided alias on your Desktop to launch the Auto-Clicker without opening the terminal. Note: Be sure to grant this app Accessibility permissions on its first run if prompted.
+**Before you press ▶ Start, make sure:**
+1. **iPhone Mirroring is open** and showing your phone.
+2. **Screen Recording** and **Accessibility** are granted (see the table above). Without Accessibility, macOS silently swallows every click — the app warns you in the activity log rather than failing quietly.
 
-### Manual Installation
+### Double-click launch
+
+A native `iOS AutoClicker.app` bundle with a custom icon ships in the project folder — double-click it (or its Desktop alias) to launch without a terminal. Grant it Accessibility on first run if prompted.
+
+### Manual launch
 
 ```bash
 python3 -m venv .venv
@@ -108,6 +113,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python -m src.main
 ```
+
+### Running the tests
+
+```bash
+.venv/bin/python -m pytest tests/ -q       # 125 tests, ~3s
+```
+
+Qt is forced offscreen and the tracking stream is redirected to a temp file (see `conftest.py`), so the suite never opens a window or touches your real project data.
 
 ## Usage
 
@@ -149,6 +162,12 @@ Click **▶ Start Automation**. The app will:
 
 Click **⏹ Stop** or close the app. Your actions are auto-saved.
 
+### Sharing a timeline
+
+**📤 Export** writes a self-contained **`.zip` package** — `timeline.json` plus every reference screenshot it uses — so it works on any machine. **📥 Import** accepts that `.zip` (screenshots are extracted into the current project) or a plain `.json`.
+
+> A JSON-only export stores **absolute** screenshot paths, so it loses its trigger screenshots on any other machine. Use the `.zip` unless you have a reason not to. Full spec: **[docs/TIMELINE_FORMAT.md](docs/TIMELINE_FORMAT.md)**.
+
 ## Architecture
 
 ```
@@ -161,6 +180,7 @@ src/
 ├── ocr.py                   # macOS Vision framework OCR
 ├── project.py               # Auto-save/load project data
 ├── logger.py                # Timestamped activity logging
+├── tracking.py              # Canonical-v1 event stream (tracks/tracks.jsonl)
 └── gui/
     ├── main_window.py       # Main window + automation loop
     ├── timeline_editor.py   # Add/edit click action dialog
@@ -180,32 +200,15 @@ src/
 | Click Delivery | CGEvent (Quartz) | Standard macOS programmatic clicks |
 | Window Capture | CGWindowListCreateImage (Quartz) | Low-level, reliable screen capture |
 
-## Timeline JSON Format
+## Timeline Format
 
-Timelines are saved as JSON and can be shared:
+Timelines export as a self-contained **`.zip` package** (`timeline.json` + bundled screenshots) or plain JSON. Every field, both formats, and the backward-compatibility rules are documented in **[docs/TIMELINE_FORMAT.md](docs/TIMELINE_FORMAT.md)**.
 
-```json
-{
-  "name": "My Automation",
-  "loop": true,
-  "loop_count": 0,
-  "actions": [
-    {
-      "delay_ms": 1000,
-      "x": 181,
-      "y": 696,
-      "click_type": "single",
-      "duration_ms": 500,
-      "repeat_count": 1,
-      "label": "Tap Play Button",
-      "threshold": 0.85,
-      "enabled": true,
-      "screenshot_path": "projects/default/screenshots/action_0_123456.png",
-      "match_texts": "PLAY, START"
-    }
-  ]
-}
-```
+## Distribution
+
+This app **cannot** ship on the Mac App Store or TestFlight — the App Sandbox (Guideline 2.4.5(i)) forbids exactly what it does (capture another app's window, post clicks into it), and PyQt6 is GPL-3.0-only, which is incompatible with the App Store's terms. TestFlight is not a way around this: a macOS TestFlight build must be an App-Store-signed, sandboxed bundle, so it fails at upload.
+
+The correct channel is **Developer ID + notarization** — a signed `.dmg`, no sandbox, no review, all permissions supported. Full analysis and the step-by-step path: **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
 
 ## Troubleshooting
 
