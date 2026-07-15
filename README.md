@@ -206,9 +206,10 @@ Timelines export as a self-contained **`.zip` package** (`timeline.json` + bundl
 
 ## Distribution
 
-This app **cannot** ship on the Mac App Store or TestFlight — the App Sandbox (Guideline 2.4.5(i)) forbids exactly what it does (capture another app's window, post clicks into it), and PyQt6 is GPL-3.0-only, which is incompatible with the App Store's terms. TestFlight is not a way around this: a macOS TestFlight build must be an App-Store-signed, sandboxed bundle, so it fails at upload.
+Two options, both documented with step-by-step instructions in **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**:
 
-The correct channel is **Developer ID + notarization** — a signed `.dmg`, no sandbox, no review, all permissions supported. Full analysis and the step-by-step path: **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
+- **Developer ID + notarization** — a signed `.dmg` / GitHub release. No sandbox, no review, all permissions supported. Ships as-is in ~1 day. This is the standard route for macOS automation tools.
+- **TestFlight / Mac App Store** — *possible* but not with the current build: requires porting PyQt6 → PySide6 (PyQt6 is GPL-3.0, incompatible with App Store terms), porting screen capture to ScreenCaptureKit, and rebuilding as a sandboxed bundle. It also hinges on one unverified fact — whether a sandboxed app can post synthetic clicks (`CGEvent.post`) — which must be tested first. Internal TestFlight testing skips App Review; external testers don't.
 
 ## Troubleshooting
 
