@@ -3,12 +3,12 @@ Log viewer widget for real-time display of application logs.
 Color-coded entries with auto-scroll and export functionality.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
     QPushButton, QFileDialog, QLabel
 )
-from PyQt6.QtCore import Qt, pyqtSlot, pyqtSignal, QObject
-from PyQt6.QtGui import QTextCharFormat, QColor, QFont
+from PySide6.QtCore import Qt, Slot, Signal, QObject
+from PySide6.QtGui import QTextCharFormat, QColor, QFont
 
 from src.logger import AppLogger, LogEntry, LogCategory
 from src.gui.styles import COLORS
@@ -30,7 +30,7 @@ CATEGORY_COLORS = {
 
 class LogSignalBridge(QObject):
     """Bridge to safely emit log entries from non-GUI threads."""
-    new_entry = pyqtSignal(object)
+    new_entry = Signal(object)
 
 
 class LogViewer(QWidget):
@@ -92,7 +92,7 @@ class LogViewer(QWidget):
         """Called from any thread — bridges to GUI thread."""
         self._signal_bridge.new_entry.emit(entry)
 
-    @pyqtSlot(object)
+    @Slot(object)
     def _on_new_entry(self, entry: LogEntry):
         """Handle new log entry in the GUI thread."""
         self._append_entry(entry)

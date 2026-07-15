@@ -6,7 +6,7 @@ Everything auto-saves to the project folder so no data is ever lost.
 
 import time
 import threading
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QSplitter, QFrame,
     QMessageBox, QSpinBox, QSlider, QFileDialog,
@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import (
     QHeaderView, QCheckBox, QLineEdit, QTextEdit, QComboBox,
     QSizePolicy, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QFont, QTextCharFormat, QColor
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QFont, QTextCharFormat, QColor
 
 from src.screen_capture import ScreenCapture
 from src.screen_recognizer import ScreenRecognizer
@@ -45,13 +45,13 @@ CATEGORY_COLORS = {
 
 class SignalBridge(QObject):
     """Thread-safe signal bridge for updating GUI from automation thread."""
-    match_update = pyqtSignal(list, int)
-    status_update = pyqtSignal(str)
-    automation_stopped = pyqtSignal()
-    new_log = pyqtSignal(object)
-    highlight_action = pyqtSignal(int)    # index of currently watching action
-    action_triggered = pyqtSignal(int, str)  # index, match_reason — after click executed
-    bring_to_front = pyqtSignal()  # must be on main thread (AppKit requirement)
+    match_update = Signal(list, int)
+    status_update = Signal(str)
+    automation_stopped = Signal()
+    new_log = Signal(object)
+    highlight_action = Signal(int)    # index of currently watching action
+    action_triggered = Signal(int, str)  # index, match_reason — after click executed
+    bring_to_front = Signal()  # must be on main thread (AppKit requirement)
 
 
 class MainWindow(QMainWindow):
@@ -1339,7 +1339,7 @@ class MainWindow(QMainWindow):
         if self._is_running:
             QMessageBox.information(self, "Busy", "Stop automation before creating a project.")
             return
-        from PyQt6.QtWidgets import QInputDialog
+        from PySide6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(self, "New Project", "Project name:")
         name = (name or "").strip().replace("/", "_").replace("\\", "_")
         if not ok or not name:
