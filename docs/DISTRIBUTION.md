@@ -40,9 +40,31 @@ The last row (launched via `open`, so it did **not** inherit the terminal's trus
 
 > ✅ **DONE (branch `pyside6-port`, 2026-07-14).** The GUI now imports PySide6 (6.11), signals/slots renamed (`pyqtSignal`→`Signal`, `pyqtSlot`→`Slot`); PyQt6 uninstalled. All 125 unit tests + the full UI-driver harness pass, and a rendered screenshot is pixel-identical to the PyQt6 build. Fully-scoped enums (`Qt.AlignmentFlag.…`) work unchanged in PySide6 6.11.
 
-### 3. Packaging (Guideline 2.4.5(ii)) — must rebuild the bundle
+### 3. Packaging (Guideline 2.4.5(ii)) — IN PROGRESS; this is the hard part
 
-The current `.app` is a shell script launching a hand-made venv. A Mac App Store build must be a self-contained, Xcode-signed bundle. **Fix:** package with `py2app` into a real `.app` embedding the Python runtime, then sign with an Apple Distribution certificate + a Mac App Store provisioning profile carrying the sandbox entitlement. (A bundled Python interpreter is allowed — many shipping MAS apps embed one; it is not the "deprecated tech" 2.4.5(viii) targets.)
+The current `.app` is a shell script launching a hand-made venv. A Mac App Store build must be a self-contained, Xcode-signed, **sandboxed** bundle embedding the Python runtime, signed with an Apple Distribution cert + `MAC_APP_STORE` profile.
+
+#### Packaging spike (2026-07-15) — what we learned
+
+Built the PySide6 app (a minimal window variant, to isolate framework behavior) with **py2app** and tested it under the sandbox:
+
+| Step | Result |
+|---|---|
+| py2app full build (Python 3.14 + PySide6 6.11) | ✅ builds clean (1.2 GB unpruned bundle) |
+| Run bundle **un-sandboxed** | ✅ Qt initializes, window shows (`WINDOW_SHOWN visible=True`, clean exit) — the freeze itself is sound |
+| Run bundle **sandboxed** (ad-hoc signed) | ❌ Qt "cocoa" platform plugin fails to load — app can't start |
+
+Isolation done: the failure is caused **specifically by the App Sandbox entitlement** (identical `--deep` signing, only the entitlement differs). It is **not**: a missing plugin (it's bundled), a bad path (fails even with `QT_QPA_PLATFORM_PLUGIN_PATH` set), an invalid signature (all 470 nested mach-o signed individually, plugin sig verifies), or a logged sandbox resource denial (none appear). The plugin is *found* but its dependency load fails only when sandboxed.
+
+**Leading cause:** ad-hoc signatures carry no Team ID, so under the sandbox dyld can't establish a common signing identity across the main executable and the dynamically-loaded Qt plugin/`@rpath` frameworks. A real **Apple Distribution cert** (one Team ID across every nested dylib) is expected to resolve this — which we can't replicate with ad-hoc signing.
+
+**Two ways forward (next session, at the machine):**
+1. **Re-test the same py2app bundle signed with the real Distribution cert** (team `H3425WJ3TM`, p12 in the vault). Cheapest decisive test — if same-team signing fixes the plugin load, py2app is viable.
+2. **Switch packager to [Briefcase](https://briefcase.readthedocs.io) (BeeWare)** — purpose-built to produce signed, sandboxed, MAS-uploadable Python-GUI bundles and handles Qt plugin wiring. Likely the more reliable route given how fiddly py2app + Qt + sandbox is.
+
+Also still to do in packaging: relocate user-data dirs (`projects/`, `logs/`, `tracks/`) out of the read-only bundle into the sandbox container (`Application Support`) — the app currently writes them relative to source, which the sandbox will deny.
+
+(A bundled Python interpreter is itself allowed on the MAS — many shipping apps embed one; it is not the "deprecated tech" 2.4.5(viii) targets.)
 
 ### 4. Purpose / "game bot" (Guideline 2.5.1) — review risk, not an upload blocker
 
