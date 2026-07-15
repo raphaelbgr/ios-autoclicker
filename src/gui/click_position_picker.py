@@ -3,9 +3,9 @@ Click position picker widget.
 Shows a screenshot where the user can click to select target coordinates.
 """
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QMouseEvent
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
+from PySide6.QtCore import Qt, Signal, QPoint, QSize
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QMouseEvent
 
 import numpy as np
 import cv2
@@ -17,7 +17,7 @@ class ClickPositionPicker(QWidget):
     Emits position_selected(x, y) with coordinates relative to the original image.
     """
 
-    position_selected = pyqtSignal(int, int)
+    position_selected = Signal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)

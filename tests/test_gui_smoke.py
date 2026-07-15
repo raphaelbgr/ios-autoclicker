@@ -19,7 +19,7 @@ from src.timeline import ClickAction
 
 @pytest.fixture(scope="module")
 def qapp():
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     yield app
 
@@ -92,7 +92,7 @@ class TestTimelineEditing:
         assert any(a.get("label") == "smoke" for a in saved["actions"])
 
     def test_enable_toggle_via_checkbox(self, main_window, qapp):
-        from PyQt6.QtCore import Qt
+        from PySide6.QtCore import Qt
         main_window._timeline.add_action(
             ClickAction(delay_ms=0, x=1, y=1, label="toggle-me"))
         main_window._refresh_table()

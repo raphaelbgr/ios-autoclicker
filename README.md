@@ -194,7 +194,7 @@ src/
 
 | Component | Technology | Why |
 |---|---|---|
-| GUI | PyQt6 | Cross-platform, polished native feel |
+| GUI | PySide6 | Qt's official binding (LGPL — App Store compatible), polished native feel |
 | Screen Recognition | OpenCV + SSIM (scikit-image) | Fast, no training needed |
 | OCR | macOS Vision framework (PyObjC) | Native, no external APIs |
 | Click Delivery | CGEvent (Quartz) | Standard macOS programmatic clicks |
@@ -209,7 +209,7 @@ Timelines export as a self-contained **`.zip` package** (`timeline.json` + bundl
 Two options, both documented with step-by-step instructions in **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**:
 
 - **Developer ID + notarization** — a signed `.dmg` / GitHub release. No sandbox, no review, all permissions supported. Ships as-is in ~1 day. This is the standard route for macOS automation tools.
-- **TestFlight / Mac App Store** — *possible* but not with the current build: requires porting PyQt6 → PySide6 (PyQt6 is GPL-3.0, incompatible with App Store terms), porting screen capture to ScreenCaptureKit, and rebuilding as a sandboxed bundle. It also hinges on one unverified fact — whether a sandboxed app can post synthetic clicks (`CGEvent.post`) — which must be tested first. Internal TestFlight testing skips App Review; external testers don't.
+- **TestFlight / Mac App Store** — technically viable (verified: a sandboxed app *can* post clicks via `CGEvent.post` — see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)). The GUI now uses **PySide6** (LGPL) so there's no App Store license blocker. Remaining before a store build: port screen capture to ScreenCaptureKit and repackage as a sandboxed, Apple-signed macOS bundle. Internal TestFlight skips App Review; external testers don't.
 
 ## Troubleshooting
 

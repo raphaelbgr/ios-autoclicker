@@ -38,6 +38,8 @@ The last row (launched via `open`, so it did **not** inherit the terminal's trus
 
 **Fix:** port the GUI from PyQt6 to **PySide6** — Qt's *official* binding, licensed LGPL, which App Store distribution allows. The two APIs are ~95% identical; this is a mechanical port, not a rewrite. (Alternative: buy a commercial PyQt license from Riverbank — costs money, no code change.)
 
+> ✅ **DONE (branch `pyside6-port`, 2026-07-14).** The GUI now imports PySide6 (6.11), signals/slots renamed (`pyqtSignal`→`Signal`, `pyqtSlot`→`Slot`); PyQt6 uninstalled. All 125 unit tests + the full UI-driver harness pass, and a rendered screenshot is pixel-identical to the PyQt6 build. Fully-scoped enums (`Qt.AlignmentFlag.…`) work unchanged in PySide6 6.11.
+
 ### 3. Packaging (Guideline 2.4.5(ii)) — must rebuild the bundle
 
 The current `.app` is a shell script launching a hand-made venv. A Mac App Store build must be a self-contained, Xcode-signed bundle. **Fix:** package with `py2app` into a real `.app` embedding the Python runtime, then sign with an Apple Distribution certificate + a Mac App Store provisioning profile carrying the sandbox entitlement. (A bundled Python interpreter is allowed — many shipping MAS apps embed one; it is not the "deprecated tech" 2.4.5(viii) targets.)

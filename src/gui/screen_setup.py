@@ -3,13 +3,13 @@ Screen setup panel.
 Allows capturing/uploading reference screenshots and configuring similarity threshold.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QFileDialog, QGroupBox, QProgressBar, QSizePolicy,
     QScrollArea, QCheckBox
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QPixmap
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QPixmap
 
 import cv2
 import numpy as np
@@ -23,8 +23,8 @@ from src.gui.styles import COLORS
 class ScreenSetup(QWidget):
     """Panel for setting up screen recognition."""
 
-    reference_updated = pyqtSignal()  # Emitted when reference image changes
-    threshold_changed = pyqtSignal(float)
+    reference_updated = Signal()  # Emitted when reference image changes
+    threshold_changed = Signal(float)
 
     def __init__(self, screen_capture: ScreenCapture,
                  recognizer: ScreenRecognizer, parent=None):

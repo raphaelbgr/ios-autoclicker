@@ -3,14 +3,14 @@ Timeline editor panel.
 Visual interface for building and editing click action sequences.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
     QSpinBox, QComboBox, QCheckBox, QFileDialog, QDialog,
     QFormLayout, QDialogButtonBox, QLineEdit, QMessageBox, QSlider
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 
 from src.timeline import Timeline, ClickAction
 from src.click_engine import ClickType
@@ -338,7 +338,7 @@ class AddClickDialog(QDialog):
 class TimelineEditor(QWidget):
     """Timeline editor with table view and action management."""
 
-    timeline_changed = pyqtSignal()
+    timeline_changed = Signal()
 
     def __init__(self, timeline: Timeline,
                  picker: ClickPositionPicker = None,
