@@ -1,25 +1,36 @@
 # Distribution: Mac App Store, TestFlight, and Developer ID
 
-**Corrected verdict (2026-07-14): TestFlight for macOS is *possible*, but NOT with the current build. It requires two changes we control (swap PyQt6 → PySide6 to clear the GPL problem; rebuild as a sandboxed, Xcode-signed `.app`) and hinges on ONE unverified technical fact: whether a sandboxed app can *post* synthetic clicks (`CGEvent.post`). Screen capture in a sandbox is confirmed fine. If click-posting also works sandboxed, TestFlight is a real path. If not, only Developer ID + notarization (a signed `.dmg`) can ship it.**
+**Verified verdict (2026-07-14): TestFlight for macOS is VIABLE. The one make-or-break unknown — whether a sandboxed app can post synthetic clicks (`CGEvent.post`) — was tested empirically and the answer is YES (see "Sandbox click test" below). No technical unknowns remain; the work is a bounded engineering job: swap PyQt6 → PySide6 (clear the GPL problem), port screen capture to ScreenCaptureKit, and repackage as a sandboxed, Xcode-signed `.app`. Internal TestFlight then requires no App Review. Developer ID + notarization (a signed `.dmg`) remains the zero-effort alternative if you'd rather not do the port.**
 
-> This replaces an earlier draft of this doc that said the App Store was "a dead end." That was too strong: I had wrongly assumed a sandboxed app can't screen-capture another window. It can. See the corrections below.
+> Correction history: an even earlier draft called the App Store "a dead end" (wrongly assumed sandboxed apps can't screen-capture another window — they can). A second draft left click-posting as an "unverified make-or-break." That's now been tested and settled — see below.
 
 ---
 
 ## The blockers, honestly assessed
 
-### 1. The App Sandbox (Guideline 2.4.5(i)) — partly clears, one unknown
+### 1. The App Sandbox (Guideline 2.4.5(i)) — CLEARED (tested)
 
 > **2.4.5(i)** They must be appropriately sandboxed…
 
-The app does two privileged things. Their sandbox status is **not** the same:
+The app does two privileged things. Both are sandbox-compatible:
 
 | What the app does | Sandboxed? | Status |
 |---|---|---|
-| Capture the iPhone Mirroring window | **YES — works** | ScreenCaptureKit (`SCWindow`) + `com.apple.security.screen-capture` entitlement + the user granting Screen Recording. Purely TCC-gated (TCC = macOS's per-app privacy permission system). ✅ verified against Apple docs. Current code uses the older `CGWindowListCreateImage` — would need porting to ScreenCaptureKit. |
-| Post synthetic clicks (`CGEvent.post`) | **UNKNOWN** | Apple's DTS engineer (Quinn) confirmed sandboxed apps can *listen* to events via a CGEventTap (Input Monitoring). He did **not** confirm *posting*. My sources conflict and no primary source settles it. **This is the single make-or-break fact and it is unverified.** |
+| Capture the iPhone Mirroring window | **YES** | ScreenCaptureKit (`SCWindow`) + `com.apple.security.screen-capture` entitlement + the user granting Screen Recording. Purely TCC-gated (TCC = macOS's per-app privacy permission system). ✅ verified against Apple docs. Current code uses the older `CGWindowListCreateImage` — would need porting to ScreenCaptureKit. |
+| Post synthetic clicks (`CGEvent.post` → `kCGHIDEventTap`) | **YES — empirically verified** | Sandbox does **not** block it. The gate is the Accessibility (post-event) permission — the *same* permission this app already requires today. See below. |
 
-So the sandbox is not the flat wall I described before. Screen capture is fine; the whole thing rides on whether `CGEvent.post` (a global click at coordinates, after we bring the target window frontmost — not AppleScript-style control of another app) is permitted from inside the sandbox. **This must be tested empirically before committing to the TestFlight path.**
+#### Sandbox click test (2026-07-14, on the Mac mini)
+
+Built a minimal Swift `.app`, ad-hoc-signed **with `com.apple.security.app-sandbox`**, and posted a single left-click tagged with a magic marker; an independent listener process watched the global event stream to confirm delivery. Matrix:
+
+| Build | Accessibility trust | Result |
+|---|---|---|
+| Un-sandboxed (control) | present | click delivered ✅ (detector valid) |
+| **Sandboxed**, HID tap | present | **click delivered** ✅ |
+| **Sandboxed**, session tap | present | **click delivered** ✅ |
+| **Sandboxed**, launched independently | **absent** | click dropped ❌ |
+
+The last row (launched via `open`, so it did **not** inherit the terminal's trust) proves the blocker is **Accessibility (TCC), not the sandbox**: with the sandbox enforced (`SANDBOX_ENFORCED=true`, container-scoped `$HOME`, writes outside the container denied) and Accessibility present, posting to the exact tap production uses (`kCGHIDEventTap`) worked. Conclusion: **a sandboxed Mac App Store build's clicking will work once the user grants Accessibility — which they already must do in the current app.**
 
 ### 2. GPL-3.0 licensing conflict — real, but solvable
 
@@ -41,21 +52,23 @@ Automating gameplay isn't the "intended purpose" of Accessibility/event APIs, an
 
 TestFlight supports macOS (since 2021, Xcode 13+). Key facts for this app:
 
-- Any macOS TestFlight build is uploaded to **App Store Connect as a Mac App Store distribution build** — so it must be **sandboxed and Apple-Distribution-signed** at upload time. Blockers #1–#3 all apply before a build is even accepted.
+- Any macOS TestFlight build is uploaded to **App Store Connect as a Mac App Store distribution build** — so it must be **sandboxed and Apple-Distribution-signed** at upload time. Blockers #2–#3 (GPL, packaging) apply before a build is even accepted; #1 (sandbox) is cleared.
 - **Internal testers** (up to 100, on your team's own devices): **no Beta App Review.** This is the reachable goal — get a sandboxed PySide6 build uploaded and test it on your own Macs.
 - **External testers** (up to 10,000, public link): require **Beta App Review** (blocker #4 applies).
 
 ### The path to an internal TestFlight build
 
-0. **De-risk first (do this before anything else):** build a throwaway sandboxed binary that calls `CGEvent.post` and confirm a click actually lands in another app after granting Accessibility. If it fails, stop — TestFlight is impossible and Developer ID is the only route.
-1. **Enrol in the Apple Developer Program** ($99/yr); note your **Team ID**.
-2. **Port PyQt6 → PySide6** (clears the GPL blocker).
+0. ~~De-risk: confirm `CGEvent.post` works sandboxed.~~ ✅ **DONE — verified it works (see "Sandbox click test").**
+1. **Apple Developer Program** — already enrolled (paid team **H3425WJ3TM**; full ASC toolkit in the vault at `global/app-store-connect/`).
+2. **Port PyQt6 → PySide6** (clears the GPL blocker). — the bulk of the work.
 3. **Port screen capture** `CGWindowListCreateImage` → **ScreenCaptureKit**.
 4. **Package** with `py2app`; enable **App Sandbox** + the `screen-capture` entitlement; add `NS…UsageDescription` strings for the permission prompts.
-5. **Sign** with Apple Distribution cert + Mac App Store provisioning profile; **upload** to App Store Connect via Xcode Organizer or Transporter.
-6. **Add internal testers** in App Store Connect → TestFlight. They install the TestFlight app and get the build — no review.
+5. **Sign** with the Apple Distribution cert + a `MAC_APP_STORE` provisioning profile; **upload** to App Store Connect. (Note: prior shipped apps are iOS/tvOS `.ipa` via `altool -t ios/tvos`; this is the **macOS** track — `.pkg`, `MAC_APP_STORE` profile — new ground even with the existing toolkit.)
+6. **Add internal testers** in App Store Connect → TestFlight — no review.
 
-Realistic effort: **~3–5 days** (PySide6 port + ScreenCaptureKit port + sandbox signing), gated on step 0 passing.
+Realistic effort: **~3–5 days**, almost all of it the PySide6 + ScreenCaptureKit ports and macOS-track packaging. No unknowns remain.
+
+**Optional final confirmation (2 min):** grant Accessibility to the test app that's already built (`.../tmp/sbxtest/IndiePoster.app`) and re-run it — the listener will show the click landing, closing the loop end-to-end for a user-granted (not inherited) sandboxed app.
 
 ---
 
