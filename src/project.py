@@ -12,9 +12,10 @@ from typing import Optional
 from dataclasses import dataclass
 
 from src.timeline import Timeline
+from src.paths import projects_dir
 
 
-PROJECTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "projects")
+PROJECTS_DIR = projects_dir()
 DEFAULT_PROJECT = "default"
 
 

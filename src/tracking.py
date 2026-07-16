@@ -38,8 +38,13 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
+from src.paths import tracks_file
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_TRACKS_PATH = os.path.join(_REPO_ROOT, "tracks", "tracks.jsonl")
+# Runtime output goes to the writable data dir (the sandbox container when
+# bundled). CONTRACTS_DIR stays repo-relative — it is authoring/audit tooling
+# that reads and writes the source tree, never used inside a shipped bundle.
+DEFAULT_TRACKS_PATH = tracks_file()
 CONTRACTS_DIR = os.path.join(_REPO_ROOT, "tracks", "contracts")
 
 _lock = threading.Lock()

@@ -23,6 +23,7 @@ from src.click_engine import ClickEngine
 from src.timeline import Timeline, TimelineExecutor, ClickAction
 from src.click_engine import ClickType
 from src.logger import AppLogger, LogCategory
+from src.paths import logs_dir
 from src.project import Project, ProjectSettings
 from src.gui.click_position_picker import ClickPositionPicker
 from src.gui.styles import STYLESHEET, COLORS
@@ -81,7 +82,7 @@ class MainWindow(QMainWindow):
               target=self._settings.target_app)
 
         # ── Core components ──
-        self._logger = AppLogger(log_dir="logs")
+        self._logger = AppLogger(log_dir=logs_dir())
         self._screen_capture = ScreenCapture()
         self._recognizer = ScreenRecognizer(threshold=self._settings.threshold)
         self._click_engine = ClickEngine(self._screen_capture)

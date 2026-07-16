@@ -1,0 +1,60 @@
+# Briefcase packaging config for the Mac App Store / TestFlight build.
+#
+# STATUS: scaffold — not yet build-verified. Briefcase packaging is done
+# interactively at the Mac (needs Xcode + Gatekeeper/LaunchServices, which
+# can't be exercised head-less). See docs/BRIEFCASE.md for the full process.
+#
+# This block is inert for normal use: the dev workflow stays `./run.sh`
+# (venv + requirements.txt). Briefcase only reads [tool.briefcase] when you
+# run a `briefcase …` command.
+
+[tool.briefcase]
+project_name = "iOS Auto-Clicker"
+bundle = "br.com.raphaelbgr"
+version = "1.0.0"
+url = "https://github.com/raphaelbgr/ios-autoclicker"
+license = "MIT"
+author = "Raphael Bernardo Gonzalez Nunes da Rocha"
+author_email = "raphaelbgr@gmail.com"
+
+[tool.briefcase.app.iosautoclicker]
+formal_name = "iOS Auto-Clicker"
+description = "Automate taps on your iPhone through the iPhone Mirroring window."
+long_description = """
+Watches the iPhone Mirroring window on your Mac, matches screen states against
+reference screenshots (and on-screen text via the Vision framework), and fires
+click sequences automatically.
+"""
+icon = "icon"                 # TODO: point at the .icns / iconset used by the current .app
+sources = ["src"]             # VERIFY at first `briefcase dev`: Briefcase runs the app's
+                              # __main__; the current entry is src/main.py:main().
+                              # May need a src/iosautoclicker/__main__.py shim or a
+                              # `main_module = "src.main"` setting.
+test_sources = ["tests"]
+
+# Runtime dependencies (mirrors requirements.txt; py2app is NOT needed under Briefcase).
+requires = [
+    "PySide6>=6.6.0",
+    "opencv-python>=4.9.0",
+    "scikit-image>=0.22.0",
+    "pyobjc-framework-Quartz>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+    "pyobjc-framework-Vision>=10.0",
+    # Added during the ScreenCaptureKit port (step 2 of the store path):
+    # "pyobjc-framework-ScreenCaptureKit>=10.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.26.0",
+]
+
+[tool.briefcase.app.iosautoclicker.macOS]
+universal_build = true
+
+# Entitlements added to the app's Entitlements.plist. Do NOT hand-edit the
+# templated plist — set them here (per Briefcase docs).
+[tool.briefcase.app.iosautoclicker.macOS.entitlement]
+"com.apple.security.app-sandbox" = true
+# Screen capture: TCC-gated (user grants Screen Recording). Whether a sandboxed
+# ScreenCaptureKit app also needs "com.apple.security.screen-capture" is
+# ambiguous in Apple's docs — VERIFY during the ScreenCaptureKit port and add
+# here if required. Clicking (CGEvent.post) needs NO entitlement — only the
+# Accessibility TCC grant (proven in the sandbox click test, 2026-07-16).
