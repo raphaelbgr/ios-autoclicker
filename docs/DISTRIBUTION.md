@@ -56,13 +56,13 @@ Built the PySide6 app (a minimal window variant, to isolate framework behavior) 
 
 Isolation done: the failure is caused **specifically by the App Sandbox entitlement** (identical `--deep` signing, only the entitlement differs). It is **not**: a missing plugin (it's bundled), a bad path (fails even with `QT_QPA_PLATFORM_PLUGIN_PATH` set), an invalid signature (all 470 nested mach-o signed individually, plugin sig verifies), or a logged sandbox resource denial (none appear). The plugin is *found* but its dependency load fails only when sandboxed.
 
-**Leading cause:** ad-hoc signatures carry no Team ID, so under the sandbox dyld can't establish a common signing identity across the main executable and the dynamically-loaded Qt plugin/`@rpath` frameworks. A real **Apple Distribution cert** (one Team ID across every nested dylib) is expected to resolve this — which we can't replicate with ad-hoc signing.
+**Real-cert test (2026-07-16) — hypothesis DISPROVEN.** Re-signed the entire bundle (all 470 nested mach-o + the app) with the real **Apple Distribution cert** (team `H3425WJ3TM`, from the vault) — verified `TeamIdentifier=H3425WJ3TM` on both the bundle and the nested Qt plugin. **Direct-exec under the sandbox still aborts identically** (`QMessageLogger::fatal` → `QGuiApplicationPrivate::createPlatformIntegration()` — the cocoa plugin still won't load). So the Team ID / library-validation theory is wrong; same-team signing does **not** fix it.
 
-**Two ways forward (next session, at the machine):**
-1. **Re-test the same py2app bundle signed with the real Distribution cert** (team `H3425WJ3TM`, p12 in the vault). Cheapest decisive test — if same-team signing fixes the plugin load, py2app is viable.
-2. **Switch packager to [Briefcase](https://briefcase.readthedocs.io) (BeeWare)** — purpose-built to produce signed, sandboxed, MAS-uploadable Python-GUI bundles and handles Qt plugin wiring. Likely the more reliable route given how fiddly py2app + Qt + sandbox is.
+Launching via LaunchServices (`open`) behaved differently — no crash, but no clean run either (hang, or no-run) — entangled with Gatekeeper (a Distribution-signed, un-notarized app) and LaunchServices registration caching. Could not get a clean pass or fail; not worth brute-forcing manually.
 
-Also still to do in packaging: relocate user-data dirs (`projects/`, `logs/`, `tracks/`) out of the read-only bundle into the sandbox container (`Application Support`) — the app currently writes them relative to source, which the sandbox will deny.
+**Conclusion: py2app + PySide6 + App Sandbox is the known-painful combination, and manually fixing its plugin/launch/signing wiring is a rabbit hole. Recommendation → switch packager to [Briefcase](https://briefcase.readthedocs.io) (BeeWare)**, which is purpose-built to produce signed, sandboxed, App-Store-uploadable Python-GUI bundles and handles exactly the Qt-plugin + LaunchServices + entitlements wiring we're fighting. This packaging work is also better done **interactively at the machine** (Gatekeeper/LaunchServices behavior is observable there, and permissions can be granted) rather than head-less.
+
+Also still to do in packaging (both routes): relocate user-data dirs (`projects/`, `logs/`, `tracks/`) out of the read-only bundle into the sandbox container (`Application Support`) — the app currently writes them relative to source, which the sandbox will deny.
 
 (A bundled Python interpreter is itself allowed on the MAS — many shipping apps embed one; it is not the "deprecated tech" 2.4.5(viii) targets.)
 
