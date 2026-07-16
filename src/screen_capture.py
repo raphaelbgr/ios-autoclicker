@@ -3,6 +3,7 @@ Screen capture module for macOS.
 Captures the iPhone Mirroring window content using Quartz APIs.
 """
 
+import threading
 import numpy as np
 from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
@@ -165,7 +166,126 @@ class ScreenCapture:
         return None
 
     def capture_window(self, window: WindowInfo) -> Optional[np.ndarray]:
-        """Capture a window and return as numpy array (BGR format for OpenCV)."""
+        """Capture a window and return as numpy array (BGR format for OpenCV).
+
+        Uses ScreenCaptureKit (the sanctioned, sandbox-compatible API and the
+        replacement for the deprecated CGWindowListCreateImage). Falls back to
+        the legacy path only if ScreenCaptureKit is unavailable or fails, so the
+        app never regresses on machines/situations where SCK misbehaves.
+
+        NOTE for the Mac App Store build: drop the legacy fallback (it calls the
+        deprecated CGWindowListCreateImage) so the shipped binary is SCK-only.
+        """
+        try:
+            img = self._capture_window_sck(window)
+            if img is not None:
+                return img
+        except Exception as e:
+            print(f"[capture_window SCK] falling back (id={window.window_id} "
+                  f"owner='{window.owner_name}'): {e}", flush=True)
+        return self._capture_window_legacy(window)
+
+    # ── ScreenCaptureKit path (primary) ──
+
+    def _get_shareable_content(self, timeout: float = 5.0):
+        """Fetch SCShareableContent synchronously by bridging the async
+        completion handler with a timeout-guarded Event (never blocks forever;
+        the timeout also avoids the PyObjC teardown SIGTRAP on a lost callback)."""
+        from ScreenCaptureKit import SCShareableContent
+        holder = {}
+        done = threading.Event()
+
+        def handler(content, error):
+            holder["content"] = content
+            holder["error"] = error
+            done.set()
+
+        SCShareableContent.getShareableContentWithCompletionHandler_(handler)
+        if not done.wait(timeout):
+            return None
+        if holder.get("error") is not None:
+            return None
+        return holder.get("content")
+
+    def _capture_window_sck(self, window: WindowInfo) -> Optional[np.ndarray]:
+        """Capture via ScreenCaptureKit's SCScreenshotManager (macOS 14+)."""
+        from ScreenCaptureKit import (
+            SCContentFilter, SCScreenshotManager, SCStreamConfiguration,
+        )
+
+        content = self._get_shareable_content()
+        if content is None:
+            return None
+
+        # Build a content filter for the target (a single window, or a display
+        # for the whole screen).
+        if window.is_entire_screen:
+            displays = content.displays()
+            if not displays:
+                return None
+            content_filter = SCContentFilter.alloc().initWithDisplay_excludingWindows_(
+                displays[0], []
+            )
+        else:
+            target = None
+            for w in content.windows():
+                if int(w.windowID()) == int(window.window_id):
+                    target = w
+                    break
+            if target is None:
+                return None
+            content_filter = SCContentFilter.alloc().initWithDesktopIndependentWindow_(
+                target
+            )
+
+        # Size the output buffer in PIXELS (Retina-aware), matching what the
+        # legacy CGWindowListCreateImage produced so stored references still match.
+        scale = self._filter_pixel_scale(content_filter)
+        cfg = SCStreamConfiguration.alloc().init()
+        cfg.setWidth_(max(1, int(round(window.width * scale))))
+        cfg.setHeight_(max(1, int(round(window.height * scale))))
+        try:
+            cfg.setShowsCursor_(False)  # keep the pointer out of reference matches
+        except Exception:
+            pass
+
+        img_holder = {}
+        done = threading.Event()
+
+        def cap_handler(cg_image, error):
+            img_holder["image"] = cg_image
+            img_holder["error"] = error
+            done.set()
+
+        SCScreenshotManager.captureImageWithFilter_configuration_completionHandler_(
+            content_filter, cfg, cap_handler
+        )
+        if not done.wait(5.0):
+            return None
+        cg_image = img_holder.get("image")
+        if cg_image is None or img_holder.get("error") is not None:
+            return None
+        return self._cgimage_to_numpy(cg_image)
+
+    @staticmethod
+    def _filter_pixel_scale(content_filter) -> float:
+        """Points→pixels scale for a content filter (2.0 on Retina)."""
+        try:
+            s = float(content_filter.pointPixelScale())  # SCContentFilter, macOS 14+
+            if s > 0:
+                return s
+        except Exception:
+            pass
+        try:
+            from AppKit import NSScreen
+            return float(NSScreen.mainScreen().backingScaleFactor())
+        except Exception:
+            return 2.0
+
+    # ── Legacy path (fallback; deprecated CGWindowListCreateImage) ──
+
+    def _capture_window_legacy(self, window: WindowInfo) -> Optional[np.ndarray]:
+        """Deprecated Quartz capture — fallback only. Remove for a MAS-only build."""
         try:
             from Quartz import CGRectInfinite
             if window.is_entire_screen:

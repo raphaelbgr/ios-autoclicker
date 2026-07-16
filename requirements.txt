@@ -4,5 +4,6 @@ scikit-image>=0.22.0
 pyobjc-framework-Quartz>=10.0
 pyobjc-framework-Cocoa>=10.0
 pyobjc-framework-Vision>=10.0
+pyobjc-framework-ScreenCaptureKit>=10.0
 Pillow>=10.0.0
 numpy>=1.26.0

@@ -59,9 +59,14 @@ Source: [Briefcase macOS publishing guide](https://briefcase.beeware.org/en/late
 
 - **App entry point** for Briefcase (see above).
 - **App icon**: point `icon =` at the existing `.iconset` / `.icns`.
-- **ScreenCaptureKit port** (step 2): the current `CGWindowListCreateImage`
-  capture must move to ScreenCaptureKit for a sandboxed build; verify whether a
-  `com.apple.security.screen-capture` entitlement is then required.
+- **ScreenCaptureKit port** (step 2): ✅ DONE in code — `capture_window()` now uses
+  `SCScreenshotManager` (SCK-primary, legacy `CGWindowListCreateImage` fallback
+  that should be dropped for the MAS-only build). VERIFY at the machine with
+  Screen Recording granted: (a) it returns a correct BGR image of the right
+  pixel size, (b) whether a `com.apple.security.screen-capture` entitlement is
+  needed under the sandbox (Apple's docs are ambiguous — ScreenCaptureKit is
+  mostly TCC-gated; add the entitlement to `pyproject.toml` only if capture is
+  denied after granting Screen Recording).
 - **Data dirs**: already relocated — `projects/`, `logs/`, `tracks/` now resolve
   to Application Support when frozen (`src/paths.py`), which the sandbox redirects
   into the app container. Nothing writes inside the read-only bundle anymore.

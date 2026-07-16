@@ -109,3 +109,78 @@ class TestBringToFront:
     def test_entire_screen_is_noop_true(self):
         win = WindowInfo(0, "[Entire Screen]", "Entire Screen", {}, 0, True)
         assert ScreenCapture.bring_window_to_front(win) is True
+
+
+# ──────────────────────────────────────────────────────────────
+#  ScreenCaptureKit path (primary) — mockable parts
+# ──────────────────────────────────────────────────────────────
+
+class _FakeWin:
+    def __init__(self, wid): self._wid = wid
+    def windowID(self): return self._wid
+
+
+class _FakeContent:
+    def __init__(self, window_ids, displays=None):
+        self._wins = [_FakeWin(i) for i in window_ids]
+        self._displays = displays if displays is not None else []
+    def windows(self): return self._wins
+    def displays(self): return self._displays
+
+
+class TestScreenCaptureKit:
+    def test_sck_import_available(self):
+        import ScreenCaptureKit  # noqa: F401 — the framework binding must be installed
+
+    def test_capture_uses_sck_result_when_available(self, monkeypatch):
+        cap = ScreenCapture()
+        sentinel = np.zeros((4, 4, 3), dtype=np.uint8)
+        monkeypatch.setattr(cap, "_capture_window_sck", lambda win: sentinel)
+        monkeypatch.setattr(cap, "_capture_window_legacy",
+                            lambda win: pytest.fail("legacy must not run when SCK succeeds"))
+        out = cap.capture_window(w(22, "iPhone Mirroring"))
+        assert out is sentinel
+
+    def test_capture_falls_back_to_legacy_on_sck_none(self, monkeypatch):
+        cap = ScreenCapture()
+        legacy = np.ones((2, 2, 3), dtype=np.uint8)
+        monkeypatch.setattr(cap, "_capture_window_sck", lambda win: None)
+        monkeypatch.setattr(cap, "_capture_window_legacy", lambda win: legacy)
+        assert cap.capture_window(w(22, "x")) is legacy
+
+    def test_capture_falls_back_to_legacy_on_sck_exception(self, monkeypatch):
+        cap = ScreenCapture()
+        legacy = np.ones((2, 2, 3), dtype=np.uint8)
+        def boom(win): raise RuntimeError("SCK exploded")
+        monkeypatch.setattr(cap, "_capture_window_sck", boom)
+        monkeypatch.setattr(cap, "_capture_window_legacy", lambda win: legacy)
+        assert cap.capture_window(w(22, "x")) is legacy
+
+    def test_sck_no_content_returns_none(self, monkeypatch):
+        cap = ScreenCapture()
+        monkeypatch.setattr(cap, "_get_shareable_content", lambda timeout=5.0: None)
+        assert cap._capture_window_sck(w(22, "x")) is None
+
+    def test_sck_window_not_found_returns_none(self, monkeypatch):
+        cap = ScreenCapture()
+        monkeypatch.setattr(cap, "_get_shareable_content",
+                            lambda timeout=5.0: _FakeContent(window_ids=[111, 222]))
+        # target id 22 isn't in the shareable content -> None (before touching real SCK)
+        assert cap._capture_window_sck(w(22, "iPhone Mirroring")) is None
+
+    def test_sck_entire_screen_no_displays_returns_none(self, monkeypatch):
+        cap = ScreenCapture()
+        monkeypatch.setattr(cap, "_get_shareable_content",
+                            lambda timeout=5.0: _FakeContent(window_ids=[], displays=[]))
+        screen = cap.find_target_window("[Entire Screen]")
+        assert cap._capture_window_sck(screen) is None
+
+    def test_filter_pixel_scale_prefers_pointPixelScale(self):
+        class F:
+            def pointPixelScale(self): return 3.0
+        assert ScreenCapture._filter_pixel_scale(F()) == 3.0
+
+    def test_filter_pixel_scale_fallback_is_positive(self):
+        class F:
+            def pointPixelScale(self): raise AttributeError
+        assert ScreenCapture._filter_pixel_scale(F()) > 0

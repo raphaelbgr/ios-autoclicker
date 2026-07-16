@@ -16,7 +16,7 @@ The app does two privileged things. Both are sandbox-compatible:
 
 | What the app does | Sandboxed? | Status |
 |---|---|---|
-| Capture the iPhone Mirroring window | **YES** | ScreenCaptureKit (`SCWindow`) + `com.apple.security.screen-capture` entitlement + the user granting Screen Recording. Purely TCC-gated (TCC = macOS's per-app privacy permission system). ✅ verified against Apple docs. Current code uses the older `CGWindowListCreateImage` — would need porting to ScreenCaptureKit. |
+| Capture the iPhone Mirroring window | **YES** | ScreenCaptureKit (`SCWindow`) + the user granting Screen Recording (mostly TCC-gated; TCC = macOS's per-app privacy permission system). ✅ **Ported 2026-07-16** — `capture_window()` uses `SCScreenshotManager` (SCK-primary, legacy fallback for non-MAS builds). Async completion-handler bridge verified crash-free/hang-free; image bytes pending a permission-granted run at the machine. |
 | Post synthetic clicks (`CGEvent.post` → `kCGHIDEventTap`) | **YES — empirically verified** | Sandbox does **not** block it. The gate is the Accessibility (post-event) permission — the *same* permission this app already requires today. See below. |
 
 #### Sandbox click test (2026-07-14, on the Mac mini)

@@ -40,8 +40,7 @@ requires = [
     "pyobjc-framework-Quartz>=10.0",
     "pyobjc-framework-Cocoa>=10.0",
     "pyobjc-framework-Vision>=10.0",
-    # Added during the ScreenCaptureKit port (step 2 of the store path):
-    # "pyobjc-framework-ScreenCaptureKit>=10.0",
+    "pyobjc-framework-ScreenCaptureKit>=10.0",
     "Pillow>=10.0.0",
     "numpy>=1.26.0",
 ]
