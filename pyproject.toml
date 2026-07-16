@@ -26,10 +26,11 @@ reference screenshots (and on-screen text via the Vision framework), and fires
 click sequences automatically.
 """
 icon = "icon"                 # TODO: point at the .icns / iconset used by the current .app
-sources = ["src"]             # VERIFY at first `briefcase dev`: Briefcase runs the app's
-                              # __main__; the current entry is src/main.py:main().
-                              # May need a src/iosautoclicker/__main__.py shim or a
-                              # `main_module = "src.main"` setting.
+# Briefcase runs `python -m iosautoclicker` (module name must equal the app name)
+# and requires a source package with that name. `iosautoclicker/` is a thin entry
+# package that delegates to `src.main`; `src` carries the real code. Both are
+# listed so both are bundled and importable.
+sources = ["iosautoclicker", "src"]
 test_sources = ["tests"]
 
 # Runtime dependencies (mirrors requirements.txt; py2app is NOT needed under Briefcase).

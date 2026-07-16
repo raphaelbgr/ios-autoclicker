@@ -27,9 +27,14 @@ briefcase build  macOS Xcode
 briefcase run    macOS Xcode     # launches the packaged app to smoke-test
 ```
 
-At `briefcase dev` / first `create`, confirm the app entry point resolves
-(current source entry is `src/main.py:main()`; Briefcase expects the app's
-`__main__` — may need a small shim or a `main_module` setting in `pyproject.toml`).
+**Entry point: pre-sorted and verified (2026-07-16).** Briefcase runs
+`python -m <app_name>` = `python -m iosautoclicker` and requires a source package
+of that name. The repo's code is the `src` package (`from src.*`), so a thin
+`iosautoclicker/` package (`__main__.py` → `from src.main import main; main()`)
+was added and `sources = ["iosautoclicker", "src"]` set. Verified two ways: (1)
+Briefcase's own `DraftAppConfig` validator accepts the config (and rejects the
+old `["src"]`); (2) `python -m iosautoclicker` drives full app startup. So
+`briefcase dev` should run first try.
 
 ## App Store submission (verified process, 2026-07-16)
 
